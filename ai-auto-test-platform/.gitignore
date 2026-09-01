@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+docker/.env
+sandbox-repos/demo-app/docker/.env
+*.log
+FEATURES.json
+docker/data/audit-jobs/*.json
+sandbox-repos/casemanagement-reduxfrontend
+**/test-results/
+**/.auth/
+**/.env.e2e
+tsconfig.tsbuildinfo

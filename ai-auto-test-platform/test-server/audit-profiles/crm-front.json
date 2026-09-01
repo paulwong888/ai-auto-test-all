@@ -1,0 +1,94 @@
+{
+  "projectId": "crm-front",
+  "modules": [
+    {
+      "id": "core_case",
+      "title": "案件核心流程",
+      "routes": [
+        "/home/:application",
+        "/SearchPage",
+        "/NewCreatePage/:application",
+        "/ViewPage",
+        "/Form",
+        "/View/:application/:incidentNumber"
+      ],
+      "sourceDirs": [
+        "src/components/view/SearchPage",
+        "src/components/view/ViewCase",
+        "src/components/view/Home"
+      ]
+    },
+    {
+      "id": "approval",
+      "title": "審批與寬免",
+      "routes": [
+        "/WaivingApproval",
+        "/approval/:application/:actionType",
+        "/ViewRefundCompleted"
+      ],
+      "sourceDirs": ["src/Case/WaivingApproval", "src/components/Approval"]
+    },
+    {
+      "id": "assignment",
+      "title": "分派與委派",
+      "routes": [
+        "/CaseAssignment",
+        "/TaskAssignment",
+        "/delegation/assignment",
+        "/delegate"
+      ],
+      "sourceDirs": ["src/components/view/CaseAssignment"]
+    },
+    {
+      "id": "report_batch",
+      "title": "報表與批量",
+      "routes": [
+        "/Report",
+        "/BatchCase/:application",
+        "/BatchAdjustment/:application",
+        "/CheckBatchCase"
+      ],
+      "sourceDirs": ["src/Case/Report"]
+    },
+    {
+      "id": "corp_nomination",
+      "title": "企業提名",
+      "routes": ["/CorpNomination/*"],
+      "sourceDirs": ["src/components/view/CorpNomination"]
+    },
+    {
+      "id": "macau",
+      "title": "澳門模組",
+      "routes": [
+        "/SearchMacau",
+        "/MacauHeader",
+        "/SearchMacauActivation",
+        "/MacauAcitvation/createActivation"
+      ]
+    },
+    {
+      "id": "elite",
+      "title": "精英 VIP",
+      "routes": [
+        "/EliteVIPSearch",
+        "/EliteCreateProfile",
+        "/ElitePage/:eliteNo"
+      ]
+    },
+    {
+      "id": "blacklist",
+      "title": "黑名單",
+      "routes": ["/blacklist/:application"]
+    },
+    {
+      "id": "config_admin",
+      "title": "配置與管理",
+      "routes": [
+        "/config/*",
+        "/CloseCase/corp",
+        "/SearchCorp",
+        "/Search/:application"
+      ]
+    }
+  ]
+}

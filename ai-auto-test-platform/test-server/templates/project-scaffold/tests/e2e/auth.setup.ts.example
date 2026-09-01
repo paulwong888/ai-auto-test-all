@@ -1,0 +1,29 @@
+import { test as setup, expect } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
+
+/**
+ * 可選：複製為 tests/e2e/auth.setup.ts，並在 playwright.config.ts 配置 setup 專案 + storageState。
+ * 帳密放在專案根目錄 .env.e2e（E2E_USERNAME / E2E_PASSWORD）。
+ */
+const authDir = path.join(__dirname, ".auth");
+const authFile = path.join(authDir, "case-user.json");
+
+setup("登入並保存 storageState", async ({ page, baseURL }) => {
+  const username = process.env.E2E_USERNAME;
+  const password = process.env.E2E_PASSWORD;
+  if (!username || !password) {
+    throw new Error("缺少 E2E_USERNAME / E2E_PASSWORD");
+  }
+
+  fs.mkdirSync(authDir, { recursive: true });
+
+  await page.goto(baseURL ?? "/");
+  // TODO: 依專案 SSO 表單調整選擇器
+  await page.locator("#username, input[name='username']").first().fill(username);
+  await page.locator("#password, input[name='password']").first().fill(password);
+  await page.locator("#kc-login, button[type='submit']").first().click();
+
+  await page.waitForURL((url) => !url.toString().includes("login"), { timeout: 120_000 });
+  await page.context().storageState({ path: authFile });
+});

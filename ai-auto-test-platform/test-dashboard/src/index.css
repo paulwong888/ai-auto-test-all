@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+body {
+  @apply bg-slate-950 text-slate-100 antialiased;
+}
+
+.markdown-report h1,
+.markdown-report h2,
+.markdown-report h3 {
+  @apply font-semibold text-emerald-400 mt-4 mb-2 first:mt-0;
+}
+
+.markdown-report h1 {
+  @apply text-base;
+}
+
+.markdown-report h2 {
+  @apply text-sm;
+}
+
+.markdown-report h3 {
+  @apply text-xs uppercase tracking-wide text-slate-400;
+}
+
+.markdown-report p {
+  @apply my-2 leading-relaxed text-slate-300;
+}
+
+.markdown-report ul,
+.markdown-report ol {
+  @apply my-2 pl-5 space-y-1 text-slate-300;
+}
+
+.markdown-report ul {
+  @apply list-disc;
+}
+
+.markdown-report ol {
+  @apply list-decimal;
+}
+
+.markdown-report li {
+  @apply leading-relaxed;
+}
+
+.markdown-report strong {
+  @apply font-semibold text-slate-100;
+}
+
+.markdown-report table {
+  @apply w-full my-3 text-xs border-collapse;
+}
+
+.markdown-report th,
+.markdown-report td {
+  @apply border border-slate-700 px-2 py-1.5 text-left align-top;
+}
+
+.markdown-report th {
+  @apply bg-slate-800/80 text-slate-200 font-medium;
+}
+
+.markdown-report td {
+  @apply text-slate-300;
+}
+
+.markdown-report code {
+  @apply font-mono text-[0.85em] text-emerald-300 bg-slate-900/80 px-1 py-0.5 rounded;
+}
+
+.markdown-report pre {
+  @apply my-3 p-3 rounded-lg bg-slate-900 border border-slate-800 overflow-x-auto;
+}
+
+.markdown-report pre code {
+  @apply bg-transparent p-0 text-green-400 text-xs;
+}
+
+.markdown-report hr {
+  @apply my-4 border-slate-800;
+}
+
+.markdown-report blockquote {
+  @apply border-l-2 border-emerald-700 pl-3 my-2 text-slate-400 italic;
+}

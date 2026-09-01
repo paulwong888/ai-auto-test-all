@@ -1,0 +1,11 @@
+name: ${COMPOSE_PROJECT_NAME:-demo-app}
+
+services:
+  web:
+    container_name: ${CONTAINER_NAME:-demo-app}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "0.0.0.0:${PORT}:80"
+    restart: unless-stopped

@@ -1,0 +1,65 @@
+name: ${COMPOSE_PROJECT_NAME:-ai-test-platform}
+
+services:
+  server:
+    container_name: ${SERVER_CONTAINER_NAME:-ai-test-platform-server}
+    build:
+      context: ..
+      dockerfile: docker/server/Dockerfile
+    env_file:
+      - .env
+    environment:
+      HOST: ${HOST}
+      PORT: ${PORT}
+      PI_CLI_PATH: ${PI_CLI_PATH}
+      PI_RPC_ARGS: ${PI_RPC_ARGS}
+      PI_PROVIDER: ${PI_PROVIDER}
+      PI_MODEL: ${PI_MODEL}
+      HIGRESS_BASE_URL: ${HIGRESS_BASE_URL}
+      HIGRESS_API_KEY: ${HIGRESS_API_KEY}
+      RUN_TIMEOUT_MS: ${RUN_TIMEOUT_MS}
+      TARGET_APP_URL: ${TARGET_APP_URL}
+      SANDBOX_REPO: ${SANDBOX_REPO}
+      SANDBOX_REPOS_CONTAINER_PATH: ${SANDBOX_REPOS_CONTAINER_PATH}
+      EXTERNAL_REPOS_CONTAINER_PATH: ${EXTERNAL_REPOS_CONTAINER_PATH}
+      PROJECTS_FILE: ${PROJECTS_FILE}
+      AUDIT_TIMEOUT_MS: ${AUDIT_TIMEOUT_MS}
+      AUDIT_MODULE_TIMEOUT_MS: ${AUDIT_MODULE_TIMEOUT_MS:-600000}
+      AUDIT_FULL_ENABLED: ${AUDIT_FULL_ENABLED:-true}
+      AUDIT_JOBS_DIR: ${AUDIT_JOBS_DIR:-/data/platform/audit-jobs}
+      AUDIT_PROFILES_DIR: ${AUDIT_PROFILES_DIR:-/app/test-server/audit-profiles}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${SANDBOX_REPOS_HOST_PATH}:${SANDBOX_REPOS_CONTAINER_PATH}
+      - ${EXTERNAL_REPOS_HOST_PATH}:${EXTERNAL_REPOS_CONTAINER_PATH}
+      - ./data:/data/platform
+    ports:
+      - "0.0.0.0:${SERVER_PORT}:${PORT}"
+    networks:
+      - app-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:${PORT}/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  dashboard:
+    container_name: ${DASHBOARD_CONTAINER_NAME:-ai-test-platform-dashboard}
+    build:
+      context: ..
+      dockerfile: docker/dashboard/Dockerfile
+    ports:
+      - "0.0.0.0:${DASHBOARD_PORT}:80"
+    depends_on:
+      server:
+        condition: service_healthy
+    networks:
+      - app-net
+    restart: unless-stopped
+
+networks:
+  app-net:
+    driver: bridge

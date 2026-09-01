@@ -1,0 +1,19 @@
+{
+  "name": "ai-test-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "基于 Pi Agent + Gherkin 的 Web 自动化探索性测试系统",
+  "workspaces": [
+    "test-server",
+    "test-dashboard"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev -w test-server",
+    "dev:dashboard": "npm run dev -w test-dashboard",
+    "build": "npm run build -w test-server && npm run build -w test-dashboard",
+    "audit": "npm run audit -w test-server"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

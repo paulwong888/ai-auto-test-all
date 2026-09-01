@@ -1,0 +1,14 @@
+{
+  "defaultPolicy": {
+    "tools": "deny",
+    "bash": "deny"
+  },
+  "tools": {
+    "read": "allow",
+    "write": "allow",
+    "edit": "allow"
+  },
+  "bash": {
+    "npx playwright test *": "allow"
+  }
+}
