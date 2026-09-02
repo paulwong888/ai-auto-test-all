@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import AuditProgress from "./components/AuditProgress";
 import FeatureCard from "./components/FeatureCard";
+import FeatureEditModal from "./components/FeatureEditModal";
 import LiveTerminal from "./components/LiveTerminal";
 import ProjectManager from "./components/ProjectManager";
 import ProjectSelector from "./components/ProjectSelector";
 import { useAuditWebSocket } from "./hooks/useAuditWebSocket";
 import { useRunWebSocket } from "./hooks/useRunWebSocket";
-import type { FeaturesDocument } from "./types";
+import type { FeatureItem, FeaturesDocument, FlatGherkinStep } from "./types";
 import type { Project } from "./types/project";
 import { SELECTED_PROJECT_KEY } from "./types/project";
 
@@ -25,9 +26,69 @@ export default function App() {
   const [fullAuditStatus, setFullAuditStatus] = useState<LoadStatus>("idle");
   const [runBusy, setRunBusy] = useState(false);
   const [banner, setBanner] = useState("");
+  const [editingFeature, setEditingFeature] = useState<FeatureItem | null>(null);
 
   const live = useRunWebSocket();
   const auditLive = useAuditWebSocket();
+
+  const flattenSteps = useCallback((feature: FeaturesDocument["features"][number]): FlatGherkinStep[] => {
+    const steps: FlatGherkinStep[] = [];
+    const push = (phase: FlatGherkinStep["phase"], texts: string[]) => {
+      texts.forEach((text, index) => {
+        steps.push({ phase, index, text, status: "pending" });
+      });
+    };
+    push("given", feature.gherkin.given);
+    push("when", feature.gherkin.when);
+    if (feature.gherkin.and?.length) push("and", feature.gherkin.and);
+    push("then", feature.gherkin.then);
+    return steps;
+  }, []);
+
+  const syncRunStatus = useCallback(async () => {
+    const res = await fetch("/api/run/status");
+    const data = await res.json();
+    if (!res.ok || !data.ok) return;
+
+    if (!data.running || !data.activeRun) {
+      if (!live.activeRunId || live.runFinished) {
+        setRunBusy(false);
+      }
+      return;
+    }
+
+    const { runId, featureId, title, logs } = data.activeRun as {
+      runId: string;
+      featureId: string;
+      title: string;
+      logs: Array<{ stream: "stdout" | "stderr" | "ai" | "tool"; text: string }>;
+    };
+
+    setRunBusy(true);
+    if (live.activeRunId === runId && live.logs.length >= logs.length) return;
+
+    let runSteps: FlatGherkinStep[] = live.activeRunId === runId ? live.steps : [];
+    if (features) {
+      const feature = features.features.find((f) => f.id === featureId);
+      if (feature) runSteps = flattenSteps(feature);
+    }
+
+    live.hydrateRun(runId, featureId, title, runSteps, logs);
+    if (live.activeRunId !== runId) {
+      setBanner(`劇本執行中：${title}（刷新後已恢復日誌，新輸出會繼續顯示）`);
+    }
+  }, [features, flattenSteps, live.activeRunId, live.activeFeatureId, live.logs.length, live.steps, live.hydrateRun, live.runFinished]);
+
+  const cancelRun = useCallback(async () => {
+    try {
+      const res = await fetch("/api/run/cancel", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setBanner("已請求取消執行中的劇本…");
+    } catch (err) {
+      setBanner(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
 
   const auditBusy =
     coreAuditStatus === "loading" ||
@@ -129,10 +190,14 @@ export default function App() {
         if (!res.ok || !data.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       } catch (err) {
         setRunBusy(false);
-        setBanner(err instanceof Error ? err.message : String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        setBanner(message);
+        if (message.includes("已有劇本")) {
+          void syncRunStatus();
+        }
       }
     },
-    [live, selectedProjectId],
+    [live, selectedProjectId, syncRunStatus],
   );
 
   const handleProjectsChanged = useCallback(async () => {
@@ -167,6 +232,14 @@ export default function App() {
   useEffect(() => {
     void loadFeatures(selectedProjectId);
   }, [loadFeatures, selectedProjectId]);
+
+  useEffect(() => {
+    void syncRunStatus();
+    const timer = window.setInterval(() => {
+      void syncRunStatus();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [syncRunStatus, features]);
 
   useEffect(() => {
     if (live.runFinished) {
@@ -240,6 +313,15 @@ export default function App() {
             >
               刷新列表
             </button>
+            {runBusy && (
+              <button
+                type="button"
+                onClick={() => void cancelRun()}
+                className="px-3 py-1.5 text-xs rounded-lg bg-red-950 border border-red-800 hover:bg-red-900"
+              >
+                取消劇本
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -272,7 +354,7 @@ export default function App() {
 
           {!features && loadStatus !== "loading" && selectedProjectId && (
             <p className="text-sm text-slate-500">
-              暫無劇本，請先「核心審計」或「完整審計」產生 FEATURES.json
+              暫無劇本，請先「核心審計」或「完整審計」產生劇本
             </p>
           )}
 
@@ -284,9 +366,30 @@ export default function App() {
               isActive={live.activeFeatureId === f.id}
               isRunning={runBusy || (!!live.activeRunId && !live.runFinished)}
               onRun={(id) => void runFeature(id)}
+              onEdit={selectedProjectId ? (feat) => setEditingFeature(feat) : undefined}
             />
           ))}
         </aside>
+
+        {editingFeature && selectedProjectId && (
+          <FeatureEditModal
+            projectId={selectedProjectId}
+            feature={editingFeature}
+            open={!!editingFeature}
+            onClose={() => setEditingFeature(null)}
+            onSaved={(updated) => {
+              setFeatures((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      features: prev.features.map((f) => (f.id === updated.id ? updated : f)),
+                    }
+                  : prev,
+              );
+              setBanner(`已保存剧本：${updated.title}`);
+            }}
+          />
+        )}
 
         <main className="p-4 min-h-[420px] lg:max-h-[calc(100vh-8rem)]">
           <LiveTerminal

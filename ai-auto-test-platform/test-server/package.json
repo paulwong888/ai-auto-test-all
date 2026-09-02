@@ -8,12 +8,15 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "audit": "tsx src/cli/audit-cli.ts",
-    "test": "node --import tsx --test src/pi/jsonl.test.ts src/pi/gherkin-step-tracker.test.ts src/services/run-prompt.test.ts src/services/project-service.test.ts src/services/audit-merge.test.ts"
+    "test": "node --import tsx --test src/pi/jsonl.test.ts src/pi/gherkin-step-tracker.test.ts src/config.test.ts src/services/run-prompt.test.ts src/services/run-prompt-context.test.ts src/services/run-history-service.test.ts src/services/project-service.test.ts src/services/audit-merge.test.ts src/services/extract-json-from-text.test.ts",
+    "db:import": "tsx src/db/import-cli.ts"
   },
   "dependencies": {
     "@types/express": "^5.0.6",
+    "@types/pg": "^8.23.1",
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "pg": "^8.23.0",
     "ws": "^8.18.2",
     "zod": "^3.25.67"
   },

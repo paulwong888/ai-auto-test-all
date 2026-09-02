@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "api-test-platform": "agent:graph"
+  },
+  "env": ".env"
+}

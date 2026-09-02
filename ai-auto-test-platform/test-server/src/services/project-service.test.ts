@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { slugify, uniqueProjectId } from "../schemas/project.js";
 import { ProjectService } from "./project-service.js";
 import type { AppConfig } from "../config.js";
+import { InMemoryProjectStore } from "../test/in-memory-stores.js";
 
 function makeConfig(baseDir: string): AppConfig {
   const sandbox = path.join(baseDir, "sandbox-repos");
@@ -16,13 +17,34 @@ function makeConfig(baseDir: string): AppConfig {
     piCliPath: "pi",
     defaultSandboxRepo: path.join(sandbox, "demo-app"),
     defaultTargetAppUrl: "http://localhost:8037",
-    projectsFile: path.join(baseDir, "platform", "projects.json"),
+    postgres: {
+      host: "127.0.0.1",
+      port: 5433,
+      database: "test",
+      user: "postgres",
+      password: "postgres",
+    },
+    legacyProjectsFile: path.join(baseDir, "platform", "projects.json"),
+    legacyAuditJobsDir: path.join(baseDir, "platform", "audit-jobs"),
     allowedRepoPrefixes: [sandbox, external],
     sandboxReposContainerPath: sandbox,
     externalReposContainerPath: external,
     piRpcArgs: ["--no-session"],
+    piRunSkillName: "e2e-test-env",
+    piRunSkillPath: "",
     auditTimeoutMs: 600_000,
+    auditModuleTimeoutMs: 600_000,
+    auditFullEnabled: true,
+    auditProfilesDir: path.join(baseDir, "audit-profiles"),
     runTimeoutMs: 900_000,
+    runMaxPlaywrightAttempts: 3,
+    runReferenceSpecLimit: 3,
+    get playwrightCliPath() {
+      return path.join(sandbox, "demo-app/node_modules/@playwright/test/cli.js");
+    },
+    get playwrightNodePath() {
+      return path.join(sandbox, "demo-app/node_modules");
+    },
   } as AppConfig;
 }
 
@@ -48,7 +70,7 @@ describe("ProjectService", () => {
     config = makeConfig(tmpDir);
     await fs.mkdir(config.allowedRepoPrefixes[0]!, { recursive: true });
     await fs.mkdir(config.allowedRepoPrefixes[1]!, { recursive: true });
-    service = new ProjectService(config);
+    service = new ProjectService(config, new InMemoryProjectStore());
     await service.init();
   });
 

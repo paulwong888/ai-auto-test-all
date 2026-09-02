@@ -144,6 +144,39 @@ export function useRunWebSocket() {
     setTestReport(null);
   }, []);
 
+  const hydrateRun = useCallback(
+    (
+      runId: string,
+      featureId: string,
+      title: string,
+      runSteps: FlatGherkinStep[],
+      restoredLogs: Array<{ stream: LiveLogLine["stream"]; text: string }>,
+    ) => {
+      activeRunIdRef.current = runId;
+      aiBufferRef.current = restoredLogs
+        .filter((l) => l.stream === "ai")
+        .map((l) => l.text)
+        .join("");
+      logId.current = restoredLogs.length;
+      milestoneId.current = 0;
+      setActiveRunId(runId);
+      setActiveFeatureId(featureId);
+      setActiveTitle(title);
+      setSteps(runSteps);
+      setRunFinished(null);
+      setTestReport(null);
+      setMilestones([]);
+      setLogs(
+        restoredLogs.map((l, i) => ({
+          id: String(i + 1),
+          stream: l.stream,
+          text: l.text,
+        })),
+      );
+    },
+    [],
+  );
+
   return {
     connected,
     activeRunId,
@@ -155,5 +188,6 @@ export function useRunWebSocket() {
     runFinished,
     testReport,
     resetLive,
+    hydrateRun,
   };
 }

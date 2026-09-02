@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Project, ProjectValidation } from "../types/project";
+import type { AuthMode, Project, ProjectValidation } from "../types/project";
 
 interface Props {
   open: boolean;
@@ -13,13 +13,39 @@ interface FormState {
   name: string;
   repoPath: string;
   targetUrl: string;
+  authMode: AuthMode;
+  e2eUsername: string;
+  e2ePassword: string;
+}
+
+interface InitTemplateResult {
+  created: string[];
+  skipped: string[];
+  warnings?: string[];
 }
 
 const emptyForm: FormState = {
   name: "",
   repoPath: "",
   targetUrl: "http://host.docker.internal:8037",
+  authMode: "none",
+  e2eUsername: "",
+  e2ePassword: "",
 };
+
+function initTemplateBody(form: FormState, projectId?: string) {
+  const payload: Record<string, string> = {};
+  if (!projectId) {
+    payload.repoPath = form.repoPath;
+    payload.targetUrl = form.targetUrl;
+  }
+  payload.authMode = form.authMode;
+  if (form.authMode === "keycloak") {
+    if (form.e2eUsername) payload.e2eUsername = form.e2eUsername;
+    if (form.e2ePassword) payload.e2ePassword = form.e2ePassword;
+  }
+  return payload;
+}
 
 export default function ProjectManager({
   open,
@@ -33,9 +59,7 @@ export default function ProjectManager({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [validation, setValidation] = useState<ProjectValidation | null>(null);
-  const [initResult, setInitResult] = useState<{ created: string[]; skipped: string[] } | null>(
-    null,
-  );
+  const [initResult, setInitResult] = useState<InitTemplateResult | null>(null);
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
 
   useEffect(() => {
@@ -64,10 +88,20 @@ export default function ProjectManager({
       name: project.name,
       repoPath: project.repoPath,
       targetUrl: project.targetUrl,
+      authMode: project.authMode ?? "none",
+      e2eUsername: "",
+      e2ePassword: "",
     });
     setError("");
     setValidation(null);
   };
+
+  const projectPayload = () => ({
+    name: form.name,
+    repoPath: form.repoPath,
+    targetUrl: form.targetUrl,
+    authMode: form.authMode,
+  });
 
   const submit = async () => {
     setBusy(true);
@@ -78,7 +112,7 @@ export default function ProjectManager({
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(projectPayload()),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -135,7 +169,7 @@ export default function ProjectManager({
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: projectId ? undefined : JSON.stringify({ repoPath: form.repoPath }),
+        body: JSON.stringify(initTemplateBody(form, projectId)),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -156,7 +190,7 @@ export default function ProjectManager({
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(projectPayload()),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -235,6 +269,40 @@ export default function ProjectManager({
               onChange={(e) => setForm((f) => ({ ...f, targetUrl: e.target.value }))}
               className="w-full text-sm rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 font-mono text-xs"
             />
+            <label className="flex items-center gap-2 text-xs text-slate-300">
+              <input
+                type="checkbox"
+                checked={form.authMode === "keycloak"}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    authMode: e.target.checked ? "keycloak" : "none",
+                  }))
+                }
+              />
+              需要 SSO / Keycloak 登入
+            </label>
+            {form.authMode === "keycloak" && (
+              <div className="space-y-2 pl-1 border-l-2 border-cyan-900 ml-1">
+                <input
+                  type="text"
+                  placeholder="E2E 測試帳號 (E2E_USERNAME)"
+                  value={form.e2eUsername}
+                  onChange={(e) => setForm((f) => ({ ...f, e2eUsername: e.target.value }))}
+                  className="w-full text-sm rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 font-mono text-xs"
+                />
+                <input
+                  type="password"
+                  placeholder="E2E 測試密碼 (E2E_PASSWORD)"
+                  value={form.e2ePassword}
+                  onChange={(e) => setForm((f) => ({ ...f, e2ePassword: e.target.value }))}
+                  className="w-full text-sm rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 font-mono text-xs"
+                />
+                <p className="text-xs text-amber-400/90">
+                  targetUrl 須為 Keycloak 已登記的 redirect_uri（例如 http://172.26.9.212:8026）
+                </p>
+              </div>
+            )}
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
@@ -285,6 +353,13 @@ export default function ProjectManager({
               {initResult.skipped.length > 0 && (
                 <p className="text-slate-400 mt-1">已存在略過：{initResult.skipped.join(", ")}</p>
               )}
+              {initResult.warnings && initResult.warnings.length > 0 && (
+                <ul className="mt-2 list-disc list-inside text-amber-300">
+                  {initResult.warnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
 
@@ -319,6 +394,9 @@ export default function ProjectManager({
                   <p className="text-sm font-medium text-slate-200">{p.name}</p>
                   <p className="text-xs text-slate-500 font-mono truncate">{p.repoPath}</p>
                   <p className="text-xs text-slate-500 font-mono truncate">{p.targetUrl}</p>
+                  {p.authMode === "keycloak" && (
+                    <p className="text-xs text-cyan-500">SSO / Keycloak</p>
+                  )}
                 </div>
                 <div className="flex gap-2 shrink-0 flex-wrap">
                   <button

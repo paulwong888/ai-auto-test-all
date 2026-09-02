@@ -9,6 +9,19 @@ export interface GherkinSteps {
   and?: string[];
 }
 
+export interface ManualAccount {
+  role: string;
+  username: string;
+  password?: string;
+  note?: string;
+}
+
+export interface ManualConfig {
+  accounts?: ManualAccount[];
+  env?: Record<string, string>;
+  notes?: string;
+}
+
 export interface FeatureItem {
   id: string;
   title: string;
@@ -17,6 +30,8 @@ export interface FeatureItem {
   route?: string;
   gherkin: GherkinSteps;
   gherkinText: string;
+  manualConfig?: ManualConfig;
+  source?: "audit" | "import" | "manual";
 }
 
 export interface FeaturesDocument {

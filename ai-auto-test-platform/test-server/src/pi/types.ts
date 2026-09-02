@@ -129,6 +129,10 @@ export interface FeatureItem {
   gherkin: GherkinSteps;
   /** 完整 Gherkin 文本，便于前端直接展示 */
   gherkinText: string;
+  /** 人工测试配置（帐号、env 等） */
+  manualConfig?: import("../schemas/feature-manual.js").ManualConfig;
+  /** 数据来源 */
+  source?: import("../schemas/feature-manual.js").FeatureSource;
 }
 
 /** FEATURES.json 根结构 */

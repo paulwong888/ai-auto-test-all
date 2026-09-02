@@ -31,10 +31,12 @@ RUN npm ci -w test-server --omit=dev
 COPY --from=builder /app/test-server/dist ./test-server/dist
 COPY test-server/templates ./test-server/templates
 COPY test-server/audit-profiles ./test-server/audit-profiles
+COPY test-server/migrations ./test-server/migrations
 COPY sandbox-repos ./sandbox-repos
 
 COPY docker/pi-agent/models.json.template /etc/pi-agent/models.json.template
 COPY docker/pi-agent/settings.json.template /etc/pi-agent/settings.json.template
+COPY docker/skills /etc/pi-agent/skills
 COPY docker/server/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

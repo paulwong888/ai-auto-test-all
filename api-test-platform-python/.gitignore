@@ -1,0 +1,24 @@
+# Environment (secrets)
+docker/.env
+ui/.env
+backend/.env
+
+# Python
+__pycache__/
+.langgraph_api/
+backend/.langgraph_api/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/.venv/
+backend/workspace/test_suites/
+workspace/
+
+# Node
+ui/node_modules/
+ui/.next/
+ui/tsconfig.tsbuildinfo
+
+# IDE
+.idea/
+.vscode/

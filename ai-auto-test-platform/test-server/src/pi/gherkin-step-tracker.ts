@@ -46,6 +46,14 @@ export class GherkinStepTracker {
     return this.finished;
   }
 
+  getPlaywrightAttempt(): number {
+    return this.playwrightAttempt;
+  }
+
+  getHealing(): boolean {
+    return this.healing;
+  }
+
   onRunStart(): TrackerUpdate[] {
     if (this.steps.length === 0) return [];
     return this.setStepStatus(0, "running");

@@ -7,6 +7,7 @@ interface Props {
   isActive: boolean;
   isRunning: boolean;
   onRun: (featureId: string) => void;
+  onEdit?: (feature: FeatureItem) => void;
 }
 
 function stepsForFeature(
@@ -37,6 +38,7 @@ export default function FeatureCard({
   isActive,
   isRunning,
   onRun,
+  onEdit,
 }: Props) {
   const steps = stepsForFeature(feature, liveSteps, isActive);
 
@@ -50,17 +52,36 @@ export default function FeatureCard({
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="font-medium text-slate-100">{feature.title}</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="font-medium text-slate-100">{feature.title}</h3>
+            {feature.source === "manual" && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300 border border-amber-700/50">
+                已人工修改
+              </span>
+            )}
+          </div>
           <p className="text-xs text-slate-500 mt-1">{feature.gherkin.scenario}</p>
         </div>
-        <button
-          type="button"
-          disabled={isRunning}
-          onClick={() => onRun(feature.id)}
-          className="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 font-medium whitespace-nowrap"
-        >
-          驅動 AI 執行
-        </button>
+        <div className="flex shrink-0 gap-2">
+          {onEdit && (
+            <button
+              type="button"
+              disabled={isRunning}
+              onClick={() => onEdit(feature)}
+              className="px-3 py-1.5 text-xs rounded-lg border border-slate-600 hover:border-slate-500 disabled:opacity-40 whitespace-nowrap"
+            >
+              编辑
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={isRunning}
+            onClick={() => onRun(feature.id)}
+            className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 font-medium whitespace-nowrap"
+          >
+            驅動 AI 執行
+          </button>
+        </div>
       </div>
 
       <ul className="space-y-1.5 text-sm">

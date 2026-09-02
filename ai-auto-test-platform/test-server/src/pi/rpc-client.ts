@@ -161,6 +161,13 @@ export class PiRpcClient extends EventEmitter {
   /** 新一轮 prompt 前重置 settled 状态 */
   resetSettled(): void {
     this.streamState.settled = false;
+    this.streamState.lastAssistantText = "";
+    this.streamState.textBlocks.clear();
+  }
+
+  /** 最近一次助手完整回复文本（审计 JSON 解析用） */
+  getLastAssistantText(): string {
+    return this.streamState.lastAssistantText;
   }
 
   private handleLine(line: string): void {

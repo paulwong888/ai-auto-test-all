@@ -101,7 +101,7 @@ export function createAuditRouter(
 
     const features = await auditService.loadFeatures({ projectId, repoPath });
     if (!features) {
-      res.status(404).json({ ok: false, error: "FEATURES.json not found. Run POST /api/audit first." });
+      res.status(404).json({ ok: false, error: "No features found. Run POST /api/audit first." });
       return;
     }
 

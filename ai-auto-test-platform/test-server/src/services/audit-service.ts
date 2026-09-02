@@ -8,6 +8,8 @@ import type { AuditProgressEvent, FeaturesDocument } from "../pi/types.js";
 import type { ProjectService } from "./project-service.js";
 import { AuditMergeService } from "./audit-merge-service.js";
 import { AuditProfileService } from "./audit-profile-service.js";
+import { extractJsonFromText } from "./extract-json-from-text.js";
+import { FeaturesRepository } from "../repositories/features-repository.js";
 
 const FEATURES_JSON_SCHEMA = `
 \`\`\`json
@@ -53,36 +55,33 @@ const CORE_AUDIT_PROMPT = `【核心審計任務】
 3. **僅深入 6～8 個最核心的使用者流程**（例如：首頁、搜尋、建立、檢視、審批、報表），其餘模組可略過。
 
 **產出要求：**
-在專案根目錄建立或覆寫 \`FEATURES.json\`，必須嚴格使用以下 JSON 結構：
+在回覆**最末尾**輸出完整 JSON（\`\`\`json 代碼塊），結構如下：
 ${FEATURES_JSON_SCHEMA}
 
 要求：
 1. 產生 **6～8 條** Scenario，每條對應一個核心流程（大型專案勿超過 10 條）。
 2. \`gherkinText\` 必須是標準 Gherkin 格式（Given/When/Then/And，每行前兩個空格縮排）。
 3. **所有 title、description、scenario、步驟文字必須使用繁體中文**，面向非技術使用者。
-4. 審計階段禁止修改 \`src/\` 業務程式碼，只允許寫入 \`FEATURES.json\`。
-5. **必須使用 write 工具將完整 JSON 寫入 \`FEATURES.json\`，寫入成功後才可結束**；禁止只在對話中輸出 JSON 而不落盤。`;
+4. 審計階段禁止修改 \`src/\` 業務程式碼，**禁止寫入任何檔案**。
+5. **必須在回覆末尾輸出完整 JSON 代碼塊後才可結束**；禁止只在分析文字中描述而不輸出 JSON。`;
 
 const CORE_WRITE_RETRY_PROMPT = `【審計補寫任務】
 
-你剛才已完成程式碼分析，但專案根目錄 **尚未存在有效的 FEATURES.json**。
+你剛才已完成程式碼分析，但回覆中 **尚未包含有效的 JSON 代碼塊**。
 
-請**立即**使用 write 工具，將先前分析結果寫入 \`FEATURES.json\`（專案根目錄）。
-
-必須嚴格使用以下 JSON 結構：
+請**立即**在回覆最末尾輸出完整 JSON（\`\`\`json 代碼塊），結構如下：
 ${FEATURES_JSON_SCHEMA}
 
 要求：
 1. 至少 6 條、最多 10 條 Scenario，繁體中文。
-2. 只寫入 \`FEATURES.json\`，不要繼續大量讀檔。
-3. **寫入完成並確認檔案存在後才可結束**。`;
+2. 不要繼續大量讀檔，直接輸出 JSON。
+3. **JSON 代碼塊輸出完成後才可結束**。`;
 
 function buildModuleAuditPrompt(module: AuditModule, repoPath: string): string {
   const routes = module.routes.map((r) => `- \`${r}\``).join("\n");
   const dirs =
     module.sourceDirs?.map((d) => `- \`${d}/\``).join("\n") ??
     "（依 routes 對應元件自行定位）";
-  const partialPath = `.pi-audit/${module.id}.json`;
 
   return `【分模組審計任務 · ${module.title}】
 
@@ -99,7 +98,7 @@ ${dirs}
 1. 先讀 \`src/App.js\` 或 \`src/App.tsx\` 確認上述路由對應的元件。
 2. 僅深入本模組相關頁面，分析使用者互動流程。
 3. 產生 **5～8 條** Scenario（本模組內主要流程，勿超過 10 條）。
-4. **必須**使用 write 工具寫入 \`${partialPath}\`，格式如下：
+4. 在回覆**最末尾**輸出 JSON 代碼塊，格式如下：
 ${MODULE_PARTIAL_SCHEMA}
 
 要求：
@@ -107,23 +106,22 @@ ${MODULE_PARTIAL_SCHEMA}
 - 每條 feature 的 \`id\` 使用 kebab-case，建議前綴 \`${module.id}-\`
 - 所有文字使用**繁體中文**
 - \`gherkinText\` 為標準 Gherkin（Given/When/Then/And，每行前兩空格）
-- 禁止修改 \`src/\` 業務程式碼
-- **寫入 \`${partialPath}\` 成功後才可結束**`;
+- 禁止修改 \`src/\` 業務程式碼，**禁止寫入任何檔案**
+- **JSON 代碼塊輸出完成後才可結束**`;
 }
 
 function buildModuleWriteRetryPrompt(module: AuditModule): string {
-  const partialPath = `.pi-audit/${module.id}.json`;
   return `【模組審計補寫 · ${module.title}】
 
-你已完成分析，但 \`${partialPath}\` **尚未存在或無效**。
+你已完成分析，但回覆中 **尚未包含有效的 JSON 代碼塊**。
 
-請**立即**使用 write 工具寫入 \`${partialPath}\`：
+請**立即**在回覆最末尾輸出 JSON 代碼塊：
 ${MODULE_PARTIAL_SCHEMA}
 
 要求：
 - \`moduleId\` = \`${module.id}\`
 - 5～8 條 Scenario，繁體中文
-- 不要繼續大量讀檔，直接落盤`;
+- 不要繼續大量讀檔，直接輸出 JSON`;
 }
 
 export type AuditMode = "core" | "full";
@@ -134,11 +132,8 @@ export interface AuditOptions {
   repoPath?: string;
   mode?: AuditMode;
   onProgress?: (event: AuditProgressEvent) => void;
-  /** full 模式：仅跑指定模块（续跑失败模块） */
   moduleIds?: string[];
-  /** 外部传入已启动的 Pi 客户端（full job 复用） */
   client?: PiRpcClient;
-  /** 模块完成后回调（full job 增量合并） */
   onModuleComplete?: (moduleId: string, featureCount: number) => void;
 }
 
@@ -152,14 +147,22 @@ export interface ModuleAuditResult {
   featureCount: number;
 }
 
+function dbFeaturesPath(projectId: string): string {
+  return `db://${projectId}`;
+}
+
 export class AuditService {
-  private readonly mergeService = new AuditMergeService();
+  private readonly featuresRepo: FeaturesRepository;
+  private readonly mergeService: AuditMergeService;
   private readonly profileService: AuditProfileService;
 
   constructor(
     private readonly config: AppConfig,
     private readonly projectService: ProjectService,
+    featuresRepo?: FeaturesRepository,
   ) {
+    this.featuresRepo = featuresRepo ?? new FeaturesRepository();
+    this.mergeService = new AuditMergeService(this.featuresRepo);
     this.profileService = new AuditProfileService(config);
   }
 
@@ -174,6 +177,29 @@ export class AuditService {
     return path.resolve(options.repoPath ?? this.config.defaultSandboxRepo);
   }
 
+  private async resolveProjectId(options: {
+    projectId?: string;
+    repoPath?: string;
+  }): Promise<string> {
+    if (options.projectId) return options.projectId;
+    const repoPath = await this.resolveRepoPath(options);
+    const id = await this.projectService.resolveIdByRepoPath(repoPath);
+    if (!id) {
+      throw new Error("projectId required (repo not registered in platform)");
+    }
+    return id;
+  }
+
+  private parseDocumentFromClient(client: PiRpcClient, repoPath: string): FeaturesDocument {
+    const raw = extractJsonFromText(client.getLastAssistantText());
+    const doc = parseFeaturesDocument(raw);
+    return {
+      ...doc,
+      repoPath,
+      generatedAt: doc.generatedAt || new Date().toISOString(),
+    };
+  }
+
   async runAudit(options: AuditOptions = {}): Promise<AuditResult> {
     const mode = options.mode ?? "core";
     if (mode === "full") {
@@ -184,7 +210,8 @@ export class AuditService {
 
   async runCoreAudit(options: AuditOptions): Promise<AuditResult> {
     const repoPath = await this.resolveRepoPath(options);
-    const featuresPath = this.mergeService.featuresPath(repoPath);
+    const projectId = await this.resolveProjectId(options);
+    const featuresPath = dbFeaturesPath(projectId);
 
     const emit = (event: AuditProgressEvent) => {
       options.onProgress?.(event);
@@ -219,29 +246,37 @@ export class AuditService {
         if (index > 0) {
           emit({
             kind: "error",
-            message: `FEATURES.json 尚未產生，正在進行第 ${index} 次補寫…`,
+            message: `劇本 JSON 尚未解析成功，正在進行第 ${index} 次補寫…`,
           });
         }
         await client.promptAndWait(message, timeoutMs);
-        features = await this.tryLoadFeatures(featuresPath);
-        if (features) break;
+        try {
+          features = this.parseDocumentFromClient(client, repoPath);
+          break;
+        } catch {
+          features = null;
+        }
       }
 
       if (!features) {
-        throw new Error(
-          `Pi Agent finished but FEATURES.json is missing or invalid at ${featuresPath}`,
-        );
+        throw new Error("Pi Agent finished but valid features JSON was not found in reply");
       }
 
-      emit({ kind: "features_loaded", features });
+      const persisted = await this.featuresRepo.upsertFeaturesFromAudit(
+        projectId,
+        repoPath,
+        features.features,
+      );
+
+      emit({ kind: "features_loaded", features: persisted });
       emit({
         kind: "completed",
         featuresPath,
-        featureCount: features.features.length,
+        featureCount: persisted.features.length,
         mode: "core",
       });
 
-      return { featuresPath, features };
+      return { featuresPath, features: persisted };
     } finally {
       client.stop();
     }
@@ -251,8 +286,8 @@ export class AuditService {
     options: AuditOptions & { module: AuditModule },
   ): Promise<ModuleAuditResult> {
     const repoPath = await this.resolveRepoPath(options);
+    const projectId = await this.resolveProjectId(options);
     const { module } = options;
-    const partialPath = this.mergeService.modulePartialPath(repoPath, module.id);
 
     const emit = (event: AuditProgressEvent) => {
       options.onProgress?.(event);
@@ -263,8 +298,6 @@ export class AuditService {
       moduleId: module.id,
       moduleTitle: module.title,
     });
-
-    await this.mergeService.ensurePiAuditDir(repoPath);
 
     const ownClient = !options.client;
     const client =
@@ -296,26 +329,27 @@ export class AuditService {
         },
       ];
 
-      let partial = null as Awaited<
-        ReturnType<AuditMergeService["loadModulePartial"]>
-      >;
+      let partial = null as Awaited<ReturnType<AuditMergeService["loadModulePartial"]>>;
 
       for (const [index, { message, timeoutMs }] of prompts.entries()) {
         if (index > 0) {
           emit({
             kind: "error",
-            message: `模組 ${module.title} 尚未落盤，第 ${index} 次補寫…`,
+            message: `模組 ${module.title} JSON 尚未解析成功，第 ${index} 次補寫…`,
           });
         }
         await client.promptAndWait(message, timeoutMs);
-        partial = await this.mergeService.loadModulePartial(repoPath, module.id);
-        if (partial) break;
+        try {
+          const raw = extractJsonFromText(client.getLastAssistantText());
+          partial = await this.mergeService.saveModulePartial(projectId, module.id, raw);
+          break;
+        } catch {
+          partial = null;
+        }
       }
 
       if (!partial) {
-        throw new Error(
-          `Module ${module.id} finished but partial file missing at ${partialPath}`,
-        );
+        throw new Error(`Module ${module.id} finished but valid partial JSON was not found in reply`);
       }
 
       emit({
@@ -342,7 +376,8 @@ export class AuditService {
     },
   ): Promise<AuditResult> {
     const repoPath = await this.resolveRepoPath(options);
-    const featuresPath = this.mergeService.featuresPath(repoPath);
+    const projectId = await this.resolveProjectId(options);
+    const featuresPath = dbFeaturesPath(projectId);
 
     const emit = (event: AuditProgressEvent) => {
       options.onProgress?.(event);
@@ -354,8 +389,6 @@ export class AuditService {
       throw new Error(`Sandbox repo not found: ${repoPath}`);
     });
 
-    await this.mergeService.ensurePiAuditDir(repoPath);
-
     const client = new PiRpcClient({
       cwd: repoPath,
       piCliPath: this.config.piCliPath,
@@ -363,20 +396,14 @@ export class AuditService {
       onProgress: emit,
     });
 
-    const completedModuleIds: string[] = [];
-
     try {
       const pid = await client.start();
       emit({ kind: "pi_spawned", pid });
 
       for (const module of options.modules) {
         if (options.skipCompleted) {
-          const existing = await this.mergeService.loadModulePartial(
-            repoPath,
-            module.id,
-          );
+          const existing = await this.mergeService.loadModulePartial(projectId, module.id);
           if (existing) {
-            completedModuleIds.push(module.id);
             emit({
               kind: "module_completed",
               moduleId: module.id,
@@ -393,7 +420,6 @@ export class AuditService {
             client,
             module,
             onModuleComplete: (moduleId, count) => {
-              completedModuleIds.push(moduleId);
               options.onModuleComplete?.(moduleId, count);
             },
           });
@@ -409,7 +435,8 @@ export class AuditService {
       }
 
       const allModuleIds = options.modules.map((m) => m.id);
-      const features = await this.mergeService.mergeAndWrite(
+      const features = await this.mergeService.mergeAndPersist(
+        projectId,
         repoPath,
         allModuleIds,
       );
@@ -436,9 +463,13 @@ export class AuditService {
     projectId?: string;
     repoPath?: string;
   } = {}): Promise<FeaturesDocument | null> {
-    const resolved = await this.resolveRepoPath(options);
-    const featuresPath = this.mergeService.featuresPath(resolved);
-    return this.tryLoadFeatures(featuresPath);
+    if (options.projectId) {
+      return this.featuresRepo.getDocument(options.projectId);
+    }
+    const repoPath = await this.resolveRepoPath(options);
+    const projectId = await this.projectService.resolveIdByRepoPath(repoPath);
+    if (!projectId) return null;
+    return this.featuresRepo.getDocument(projectId);
   }
 
   getProfileService(): AuditProfileService {
@@ -449,14 +480,7 @@ export class AuditService {
     return this.mergeService;
   }
 
-  private async tryLoadFeatures(
-    featuresPath: string,
-  ): Promise<FeaturesDocument | null> {
-    try {
-      const raw = await fs.readFile(featuresPath, "utf8");
-      return parseFeaturesDocument(JSON.parse(raw));
-    } catch {
-      return null;
-    }
+  getFeaturesRepository(): FeaturesRepository {
+    return this.featuresRepo;
   }
 }

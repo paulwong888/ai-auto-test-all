@@ -69,8 +69,17 @@ cp .env.example .env
 
 1. 在 `docker/.env` 中设置 `EXTERNAL_REPOS_HOST_PATH` 指向宿主机项目根目录
 2. 将被测前端放在该目录下（或软链进去）
-3. 控制台「管理项目」→ 新增，`repoPath` 填 `/data/repos/<项目名>`
-4. 项目根目录需包含 `.pi/`、`tests/e2e/`、`playwright.config.ts`（可从 demo-app 复制模板）
+3. 控制台「管理项目」→ **建立并初始化模板**
+   - 填写 `repoPath`（如 `/data/repos/<项目名>`）与 **被测 URL**
+   - 若需 Keycloak SSO，勾选并填写测试账号密码（写入 `.env.e2e`，不提交 Git）
+   - **targetUrl 须为 SSO 已登记的 redirect_uri**
+4. 点击「校驗」确认 Playwright 环境就绪
+
+平台在容器内共享 Playwright（`NODE_PATH`），业务项目无需 `npm install @playwright/test`。
+
+**Pi skill 与 AGENTS 更新**：修改 `docker/skills/e2e-test-env/` 或脚手架 `AGENTS.md` 后，需 `./build.sh` 重建 server 镜像（或热更新容器内 `/etc/pi-agent/skills`）。已有业务项目的 `.pi/AGENTS.md` 不会自动覆盖，请重新「初始化模板」或手动合并段落。
+
+**Playwright 重跑上限**：`RUN_MAX_PLAYWRIGHT_ATTEMPTS`（默认 3）限制单次 Dashboard run 内针对目标 spec 的 bash playwright 次数；失败摘要写入项目 `{repoPath}/.pi/run-history.json`（默认 gitignore）。
 
 `SANDBOX_REPO` / `TARGET_APP_URL` 仍可用于 seed 默认项目，新流程请优先在控制台管理项目。
 
@@ -139,7 +148,7 @@ curl http://localhost:3001/api/projects
 | `PI_CLI_PATH` | `pi` | Pi Agent 可执行文件 |
 | `SANDBOX_REPO` | `sandbox-repos/demo-app` | 默认 seed 项目源码路径 |
 | `TARGET_APP_URL` | `http://host.docker.internal:8037` | 默认 seed 项目被测 URL |
-| `PROJECTS_FILE` | `docker/data/projects.json` | 项目注册表（本地开发） |
+| `POSTGRES_HOST / POSTGRES_PORT / POSTGRES_DB（默认连宿主机 ai-middleware Postgres 5433）。legacy 导入仍可读 PROJECTS_FILE` | `docker/data/projects.json` | 项目注册表（本地开发） |
 | `EXTERNAL_REPOS_CONTAINER_PATH` | `/data/repos` | 外部项目容器内挂载点 |
 | `AUDIT_TIMEOUT_MS` | `600000` | 审计超时（10 分钟） |
 
@@ -148,3 +157,14 @@ curl http://localhost:3001/api/projects
 - [x] **指令一**：项目脚手架 + Pi RPC JSONL 解析 + 审计生成 FEATURES.json
 - [x] **指令二**：Gherkin 驱动执行 + WebSocket 流式传输
 - [x] **指令三**：前端 BDD 控制台（剧本卡片 + 测试直播间）
+
+
+## PostgreSQL 存储
+
+平台数据（projects、audit jobs、run history）存储在 PostgreSQL，默认连接宿主机 `host.docker.internal:5433` 上的 `ai_auto_test_platform` 库（与 ai-middleware/postgres 共用实例）。
+
+首次启动会自动跑 migration；若 DB 为空，会从 `docker/data/projects.json`、audit jobs 目录及各 repo 的 `.pi/run-history.json` 导入。
+
+手动导入：`cd test-server && npm run db:import`
+
+环境变量见 `docker/.env.example` 中的 `POSTGRES_*`。

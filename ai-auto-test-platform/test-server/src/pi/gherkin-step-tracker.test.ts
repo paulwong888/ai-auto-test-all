@@ -46,4 +46,13 @@ describe("GherkinStepTracker", () => {
     );
     assert.ok(steps.length > 0);
   });
+
+  it("getPlaywrightAttempt counts bash playwright tool_start", () => {
+    const tracker = new GherkinStepTracker(sampleSteps);
+    assert.equal(tracker.getPlaywrightAttempt(), 0);
+    tracker.onToolStart("bash", { command: "npx playwright test tests/e2e/login.spec.ts" });
+    assert.equal(tracker.getPlaywrightAttempt(), 1);
+    tracker.onToolStart("bash", { command: "npx playwright test tests/e2e/login.spec.ts" });
+    assert.equal(tracker.getPlaywrightAttempt(), 2);
+  });
 });

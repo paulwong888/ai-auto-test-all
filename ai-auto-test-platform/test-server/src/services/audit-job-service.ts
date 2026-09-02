@@ -1,5 +1,3 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AppConfig } from "../config.js";
 import type { AuditProfile } from "../schemas/audit-profile.js";
@@ -9,6 +7,7 @@ import type {
   AuditProgressEvent,
 } from "../pi/types.js";
 import { wsHub } from "../ws/ws-hub.js";
+import { AuditJobRepository } from "../repositories/audit-job-repository.js";
 import type { ProjectService } from "./project-service.js";
 import type { AuditService } from "./audit-service.js";
 
@@ -17,15 +16,18 @@ export class AuditJobService {
     string,
     { cancelled: boolean; job: AuditJobState; saveChain: Promise<void> }
   >();
+  private readonly jobs: AuditJobRepository;
 
   constructor(
     private readonly config: AppConfig,
     private readonly projectService: ProjectService,
     private readonly auditService: AuditService,
-  ) {}
+    jobs?: AuditJobRepository,
+  ) {
+    this.jobs = jobs ?? new AuditJobRepository();
+  }
 
   async init(): Promise<void> {
-    await fs.mkdir(this.config.auditJobsDir, { recursive: true });
     await this.recoverInterruptedJobs();
   }
 
@@ -89,13 +91,7 @@ export class AuditJobService {
     if (running) {
       return structuredClone(running.job);
     }
-
-    try {
-      const raw = await fs.readFile(this.jobPath(jobId), "utf8");
-      return JSON.parse(raw) as AuditJobState;
-    } catch {
-      return null;
-    }
+    return this.jobs.findById(jobId);
   }
 
   async cancelJob(jobId: string): Promise<AuditJobState | null> {
@@ -252,35 +248,16 @@ export class AuditJobService {
   }
 
   private async recoverInterruptedJobs(): Promise<void> {
-    let entries: string[];
-    try {
-      entries = await fs.readdir(this.config.auditJobsDir);
-    } catch {
-      return;
+    const running = await this.jobs.findRunningJobs();
+    for (const job of running) {
+      job.status = "failed";
+      job.error = "Interrupted by server restart";
+      job.updatedAt = new Date().toISOString();
+      await this.persistJob(job);
     }
-
-    for (const file of entries) {
-      if (!file.endsWith(".json")) continue;
-      const jobId = file.replace(/\.json$/, "");
-      const job = await this.getJob(jobId);
-      if (job?.status === "running") {
-        job.status = "failed";
-        job.error = "Interrupted by server restart";
-        job.updatedAt = new Date().toISOString();
-        await this.persistJob(job);
-      }
-    }
-  }
-
-  private jobPath(jobId: string): string {
-    return path.join(this.config.auditJobsDir, `${jobId}.json`);
   }
 
   private async persistJob(job: AuditJobState): Promise<void> {
-    await fs.mkdir(this.config.auditJobsDir, { recursive: true });
-    const target = this.jobPath(job.id);
-    const tmp = `${target}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(job, null, 2) + "\n", "utf8");
-    await fs.rename(tmp, target);
+    await this.jobs.save(job);
   }
 }

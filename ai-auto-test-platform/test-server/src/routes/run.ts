@@ -35,7 +35,16 @@ export function createRunRouter(runService: RunService): Router {
   });
 
   router.get("/status", (_req, res) => {
-    res.json({ ok: true, running: runService.isRunning() });
+    res.json({ ok: true, ...runService.getStatus() });
+  });
+
+  router.post("/cancel", (_req, res) => {
+    const cancelled = runService.cancelRun();
+    if (!cancelled) {
+      res.status(409).json({ ok: false, error: "目前沒有執行中的劇本" });
+      return;
+    }
+    res.json({ ok: true, message: "已請求取消" });
   });
 
   return router;

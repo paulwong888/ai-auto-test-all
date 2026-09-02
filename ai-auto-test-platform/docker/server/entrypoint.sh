@@ -18,4 +18,9 @@ sed \
   -e "s|__PI_MODEL__|${PI_MODEL}|g" \
   /etc/pi-agent/settings.json.template > "${PI_AGENT_DIR}/settings.json"
 
+SKILLS_SRC="/etc/pi-agent/skills"
+SKILLS_DEST="${PI_AGENT_DIR}/skills"
+mkdir -p "$SKILLS_DEST"
+cp -a "${SKILLS_SRC}/." "${SKILLS_DEST}/"
+
 exec node dist/index.js

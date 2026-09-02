@@ -1,0 +1,93 @@
+name: ${COMPOSE_PROJECT_NAME:-api-test-platform}
+
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  langgraph:
+    build:
+      context: ..
+      dockerfile: docker/langgraph/Dockerfile
+    env_file:
+      - .env
+    environment:
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-openai}
+      MODEL_NAME: ${MODEL_NAME:-ds-v4-flash-0731-dspark}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-not-needed}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://host.docker.internal:8004/v1}
+      BACKEND_TYPE: ${BACKEND_TYPE:-local_shell}
+      BACKEND_ROOT_DIR: /app/workspace
+      BACKEND_VIRTUAL_MODE: "false"
+      BACKEND_TIMEOUT: ${BACKEND_TIMEOUT:-120}
+      CODEGRAPH_PATH: codegraph
+      CODEGRAPH_DEFAULT_PROJECT: ${CODEGRAPH_DEFAULT_PROJECT:-/data/repos/casemanagementapi-maven}
+      API_TEST_DIR: ${API_TEST_DIR:-/app/workspace/test_suites/casemanagementapi-maven}
+      POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5433}
+      POSTGRES_DB: ${POSTGRES_DB:-api_test_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    ports:
+      - "${LANGGRAPH_PORT:-8200}:8200"
+    volumes:
+      - ../backend:/app
+      - ./.env:/app/.env:ro
+      - ${EXTERNAL_REPOS_HOST_PATH}:${EXTERNAL_REPOS_CONTAINER_PATH}:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api/Dockerfile
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5433}
+      POSTGRES_DB: ${POSTGRES_DB:-api_test_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      API_HOST: 0.0.0.0
+      API_PORT: "8100"
+    ports:
+      - "${API_PORT:-8100}:8100"
+    volumes:
+      - ./.env:/app/.env:ro
+      - ${EXTERNAL_REPOS_HOST_PATH}:${EXTERNAL_REPOS_CONTAINER_PATH}:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  ui:
+    build:
+      context: ../ui
+      dockerfile: ../docker/ui/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: /api
+        NEXT_PUBLIC_ASSISTANT_ID: api-test-platform
+        NEXT_PUBLIC_MANAGEMENT_API_URL: /management-api
+        MANAGEMENT_API_URL: http://api:8100
+    environment:
+      LANGGRAPH_API_URL: http://langgraph:8200
+      MANAGEMENT_API_URL: http://api:8100
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+    ports:
+      - "${UI_PORT:-8038}:3000"
+    depends_on:
+      - langgraph
+      - api

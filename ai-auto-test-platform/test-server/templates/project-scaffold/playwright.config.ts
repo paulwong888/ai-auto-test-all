@@ -1,8 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:8037";
-/** 若使用 auth.setup.ts，改為 tests/e2e/.auth/user.json 並加入 setup 專案 */
-const authFile = process.env.PLAYWRIGHT_STORAGE_STATE;
+const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "__TARGET_URL__";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -15,17 +13,6 @@ export default defineConfig({
     baseURL,
     trace: "on-first-retry",
     ignoreHTTPSErrors: true,
-    ...(authFile ? { storageState: authFile } : {}),
   },
-  projects: authFile
-    ? [
-        { name: "setup", testMatch: /auth\.setup\.ts/ },
-        {
-          name: "chromium",
-          use: { ...devices["Desktop Chrome"], storageState: authFile },
-          dependencies: ["setup"],
-          testIgnore: /auth\.setup\.ts/,
-        },
-      ]
-    : [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

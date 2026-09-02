@@ -1,11 +1,14 @@
 import { z } from "zod";
 
+export const authModeSchema = z.enum(["none", "keycloak"]);
+
 export const projectSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   repoPath: z.string().min(1),
   targetUrl: z.string().url(),
   auditProfile: z.string().min(1).optional(),
+  authMode: authModeSchema.optional().default("none"),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });
@@ -15,6 +18,7 @@ export const createProjectInputSchema = z.object({
   repoPath: z.string().min(1),
   targetUrl: z.string().url(),
   auditProfile: z.string().min(1).optional(),
+  authMode: authModeSchema.optional(),
 });
 
 export const updateProjectInputSchema = z.object({
@@ -22,6 +26,13 @@ export const updateProjectInputSchema = z.object({
   repoPath: z.string().min(1).optional(),
   targetUrl: z.string().url().optional(),
   auditProfile: z.string().min(1).optional(),
+  authMode: authModeSchema.optional(),
+});
+
+export const initTemplateInputSchema = z.object({
+  authMode: authModeSchema.optional(),
+  e2eUsername: z.string().min(1).optional(),
+  e2ePassword: z.string().min(1).optional(),
 });
 
 export const projectsFileSchema = z.object({
@@ -30,8 +41,10 @@ export const projectsFileSchema = z.object({
 });
 
 export type Project = z.infer<typeof projectSchema>;
+export type AuthMode = z.infer<typeof authModeSchema>;
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
 export type UpdateProjectInput = z.infer<typeof updateProjectInputSchema>;
+export type InitTemplateInput = z.infer<typeof initTemplateInputSchema>;
 export type ProjectsFile = z.infer<typeof projectsFileSchema>;
 
 /** 将展示名转为 slug id */

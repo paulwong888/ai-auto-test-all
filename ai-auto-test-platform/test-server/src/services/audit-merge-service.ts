@@ -1,52 +1,14 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import { parseFeaturesDocument } from "../schemas/features.js";
+import type { FeatureItem, FeaturesDocument } from "../pi/types.js";
 import {
   modulePartialToFeatures,
   normalizeModulePartial,
 } from "../schemas/module-partial.js";
-import type { FeatureItem, FeaturesDocument } from "../pi/types.js";
+import { FeaturesRepository } from "../repositories/features-repository.js";
 
 export type { ModulePartial } from "../schemas/module-partial.js";
 
 export class AuditMergeService {
-  piAuditDir(repoPath: string): string {
-    return path.join(repoPath, ".pi-audit");
-  }
-
-  modulePartialPath(repoPath: string, moduleId: string): string {
-    return path.join(this.piAuditDir(repoPath), `${moduleId}.json`);
-  }
-
-  featuresPath(repoPath: string): string {
-    return path.join(repoPath, "FEATURES.json");
-  }
-
-  async ensurePiAuditDir(repoPath: string): Promise<void> {
-    await fs.mkdir(this.piAuditDir(repoPath), { recursive: true });
-  }
-
-  async loadModulePartial(
-    repoPath: string,
-    moduleId: string,
-  ): Promise<{ moduleId: string; features: FeatureItem[] } | null> {
-    try {
-      const raw = await fs.readFile(
-        this.modulePartialPath(repoPath, moduleId),
-        "utf8",
-      );
-      const partial = normalizeModulePartial(JSON.parse(raw));
-      if (partial.moduleId !== moduleId) {
-        partial.moduleId = moduleId;
-      }
-      return {
-        moduleId: partial.moduleId,
-        features: modulePartialToFeatures(partial),
-      };
-    } catch {
-      return null;
-    }
-  }
+  constructor(private readonly featuresRepo: FeaturesRepository = new FeaturesRepository()) {}
 
   mergeFeatures(
     existing: FeatureItem[],
@@ -71,14 +33,35 @@ export class AuditMergeService {
     return [...byId.values()];
   }
 
+  async loadModulePartial(
+    projectId: string,
+    moduleId: string,
+  ): Promise<{ moduleId: string; features: FeatureItem[] } | null> {
+    return this.featuresRepo.loadPartial(projectId, moduleId);
+  }
+
+  async saveModulePartial(
+    projectId: string,
+    moduleId: string,
+    partialRaw: unknown,
+  ): Promise<{ moduleId: string; features: FeatureItem[] }> {
+    const partial = normalizeModulePartial(partialRaw);
+    if (partial.moduleId !== moduleId) {
+      partial.moduleId = moduleId;
+    }
+    const features = modulePartialToFeatures(partial);
+    await this.featuresRepo.upsertPartial(projectId, moduleId, features);
+    return { moduleId, features };
+  }
+
   async mergeAllPartials(
-    repoPath: string,
+    projectId: string,
     moduleIds: string[],
   ): Promise<FeatureItem[]> {
     let merged: FeatureItem[] = [];
 
     for (const moduleId of moduleIds) {
-      const partial = await this.loadModulePartial(repoPath, moduleId);
+      const partial = await this.loadModulePartial(projectId, moduleId);
       if (partial) {
         merged = this.mergeFeatures(merged, partial.features, moduleId);
       }
@@ -87,33 +70,17 @@ export class AuditMergeService {
     return merged;
   }
 
-  async writeFeaturesDocument(
-    repoPath: string,
-    features: FeatureItem[],
-  ): Promise<FeaturesDocument> {
-    const doc: FeaturesDocument = {
-      version: "1.0",
-      generatedAt: new Date().toISOString(),
-      repoPath,
-      features,
-    };
-    parseFeaturesDocument(doc);
-    await fs.writeFile(
-      this.featuresPath(repoPath),
-      JSON.stringify(doc, null, 2) + "\n",
-      "utf8",
-    );
-    return doc;
-  }
-
-  async mergeAndWrite(
+  async mergeAndPersist(
+    projectId: string,
     repoPath: string,
     moduleIds: string[],
   ): Promise<FeaturesDocument> {
-    const features = await this.mergeAllPartials(repoPath, moduleIds);
+    const features = await this.mergeAllPartials(projectId, moduleIds);
     if (features.length === 0) {
       throw new Error("No module partials found to merge");
     }
-    return this.writeFeaturesDocument(repoPath, features);
+    const doc = await this.featuresRepo.upsertFeaturesFromAudit(projectId, repoPath, features);
+    await this.featuresRepo.deletePartials(projectId);
+    return doc;
   }
 }

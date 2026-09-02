@@ -1,4 +1,6 @@
 {
   "defaultProvider": "higress",
-  "defaultModel": "__PI_MODEL__"
+  "defaultModel": "__PI_MODEL__",
+  "enableSkillCommands": true,
+  "skills": ["/etc/pi-agent/skills"]
 }
