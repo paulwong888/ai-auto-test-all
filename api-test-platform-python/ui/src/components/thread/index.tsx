@@ -7,7 +7,7 @@
  * 授权商业应用请联系微信：huice666
  */
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, type ReactNode } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -52,6 +52,47 @@ export function Thread() {
 
   const lastError = useRef<string | undefined>(undefined);
 
+  function describeStreamError(message: string): { title: string; description: ReactNode } {
+    const lower = message.toLowerCase();
+    if (
+      lower.includes("remoteprotocolerror") ||
+      lower.includes("peer closed connection") ||
+      lower.includes("incomplete chunked read")
+    ) {
+      return {
+        title: "LLM 连接中断",
+        description: (
+          <p>
+            可能是 NPU/Higress 流式超时导致连接被关闭。任务可能已部分完成，可刷新页面查看线程进度，或缩小范围（如指定单个
+            Controller）后重试。
+            <br />
+            <strong>详情：</strong> <code>{message}</code>
+          </p>
+        ),
+      };
+    }
+    if (lower.includes("timeout") || lower.includes("timed out")) {
+      return {
+        title: "请求超时",
+        description: (
+          <p>
+            LLM 响应超时。可稍后重试，或分批生成测试用例。
+            <br />
+            <strong>详情：</strong> <code>{message}</code>
+          </p>
+        ),
+      };
+    }
+    return {
+      title: "发生错误，请重试",
+      description: (
+        <p>
+          <strong>详情：</strong> <code>{message}</code>
+        </p>
+      ),
+    };
+  }
+
   useEffect(() => {
     if (!stream.error) {
       lastError.current = undefined;
@@ -63,12 +104,9 @@ export function Thread() {
         return;
       }
       lastError.current = message;
-      toast.error("An error occurred. Please try again.", {
-        description: (
-          <p>
-            <strong>Error:</strong> <code>{message}</code>
-          </p>
-        ),
+      const { title, description } = describeStreamError(message);
+      toast.error(title, {
+        description,
         richColors: true,
         closeButton: true,
       });
@@ -175,14 +213,14 @@ export function Thread() {
                     height={32}
                   />
                   <span className="text-xl font-semibold tracking-tight">
-                    但问智能 API 测试平台
+                    智能 API 测试平台
                   </span>
                 </motion.button>
               ) : (
                 <div className="flex cursor-pointer items-center gap-2">
                   <PlatformLogoSVG width={32} height={32} />
                   <span className="text-xl font-semibold tracking-tight">
-                    但问智能 API 测试平台
+                    智能 API 测试平台
                   </span>
                 </div>
               )}

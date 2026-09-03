@@ -218,11 +218,11 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
             <div className="flex flex-col items-start gap-2">
               <PlatformLogoSVG className="h-7" />
               <h1 className="text-xl font-semibold tracking-tight">
-                但问智能 API 测试平台
+                智能 API 测试平台
               </h1>
             </div>
             <p className="text-muted-foreground">
-              Welcome to 但问智能 API 测试平台! Before you get started, you need to enter
+              Welcome to 智能 API 测试平台! Before you get started, you need to enter
               the URL of the deployment and the assistant / graph ID.
             </p>
           </div>

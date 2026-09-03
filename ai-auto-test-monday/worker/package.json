@@ -1,0 +1,27 @@
+{
+  "name": "@monday/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && npm run build:workflow-bundle",
+    "build:workflow-bundle": "node scripts/build-workflow-bundle.mjs",
+    "dev": "tsx watch src/worker.ts",
+    "start": "node dist/worker.js"
+  },
+  "dependencies": {
+    "@monday/agent-core": "*",
+    "@temporalio/activity": "^1.11.7",
+    "@temporalio/client": "^1.11.7",
+    "@temporalio/worker": "^1.11.7",
+    "@temporalio/workflow": "^1.11.7",
+    "ioredis": "^5.6.1",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.14",
+    "@types/node": "^22.15.21",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

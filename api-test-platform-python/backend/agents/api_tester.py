@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from langchain_core.language_models import BaseChatModel
+
 API_TESTER_PROMPT = """你是 API 智能测试平台的 **API 测试执行专家**。
 
 你负责执行 API 测试、验证接口正确性、进行单接口调试，以及输出测试执行结果。
@@ -93,7 +95,7 @@ API_TESTER_PROMPT = """你是 API 智能测试平台的 **API 测试执行专家
 """
 
 
-def get_api_tester_config(model_spec: str) -> dict:
+def get_api_tester_config(model: str | BaseChatModel) -> dict:
     """Get api-tester sub-agent configuration."""
     return {
         "name": "api-tester",
@@ -103,5 +105,5 @@ def get_api_tester_config(model_spec: str) -> dict:
             "当用户问'运行测试'、'执行测试'、'验证接口'、'契约测试'、'单接口调试'时使用。"
         ),
         "system_prompt": API_TESTER_PROMPT,
-        "model": model_spec,
+        "model": model,
     }

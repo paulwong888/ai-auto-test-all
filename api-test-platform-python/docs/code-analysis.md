@@ -27,7 +27,7 @@
 
 ## 一、项目定位
 
-**API Test Platform（但问智能 API 测试平台）** 是一个基于 **DeepAgents 多智能体架构** 的企业级 API 自动化测试平台。核心目标是通过 AI Agent 协同完成：
+**API Test Platform（智能 API 测试平台）** 是一个基于 **DeepAgents 多智能体架构** 的企业级 API 自动化测试平台。核心目标是通过 AI Agent 协同完成：
 
 1. **代码变更 → API 影响范围分析**：利用 CodeGraph 追踪代码改动影响到的 API 路由
 2. **智能测试生成**：从 OpenAPI/Swagger 自动生成正向/负向/边界测试用例和 pytest 脚本

@@ -106,6 +106,17 @@ ln -sf ../docker/.env .env
 
 最小可用 Docker 配置示例见 [`docker/.env.example`](../docker/.env.example)（Higress + 外部 Postgres 5433）。
 
+**长任务 LLM 超时（自动生成测试用例等）：**
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `LLM_TIMEOUT` | `600` | 单次 LLM 请求总超时（秒） |
+| `LLM_STREAM_CHUNK_TIMEOUT` | `600` | 流式 chunk 间隔超时（秒），NPU 慢响应时需调大 |
+| `LLM_MAX_RETRIES` | `3` | LLM 请求失败重试次数 |
+| `LLM_USE_RESPONSES_API` | `true` | 使用 `/v1/responses`；若流式不稳定可设为 `false` |
+
+应用层超时调大后，仍需在 **Higress** 侧增大 SSE/streaming 的 read timeout（建议 ≥900s），否则网关可能在约 180s 后断开 chunked 连接并导致 `RemoteProtocolError`。
+
 ### 3.2 前端 `ui/.env`
 
 ```bash

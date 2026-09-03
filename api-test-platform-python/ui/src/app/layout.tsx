@@ -20,8 +20,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "但问智能 API 测试平台",
-  description: "但问智能 API 测试平台 — 企业级智能 API 自动化测试",
+  title: "智能 API 测试平台",
+  description: "智能 API 测试平台 — 企业级智能 API 自动化测试",
 };
 
 export default function RootLayout({

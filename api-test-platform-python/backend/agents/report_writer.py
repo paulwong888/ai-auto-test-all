@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from langchain_core.language_models import BaseChatModel
+
 REPORT_WRITER_PROMPT = """你是 API 智能测试平台的 **测试报告生成专家**。
 
 你负责汇总平台各子智能体的执行结果，生成专业、结构化的 API 测试报告。
@@ -73,7 +75,7 @@ REPORT_WRITER_PROMPT = """你是 API 智能测试平台的 **测试报告生成�
 """
 
 
-def get_report_writer_config(model_spec: str) -> dict:
+def get_report_writer_config(model: str | BaseChatModel) -> dict:
     """Get report-writer sub-agent configuration."""
     return {
         "name": "report-writer",
@@ -83,5 +85,5 @@ def get_report_writer_config(model_spec: str) -> dict:
             "当用户问'生成报告'、'汇总结果'、'测试报告'时使用。"
         ),
         "system_prompt": REPORT_WRITER_PROMPT,
-        "model": model_spec,
+        "model": model,
     }

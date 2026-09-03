@@ -1,0 +1,21 @@
+{
+  "name": "ai-auto-test-monday",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Monday Director 架构 — Temporal 编排的组件感知 Web UI 自动化测试平台",
+  "workspaces": [
+    "packages/agent-core",
+    "api",
+    "worker",
+    "dashboard"
+  ],
+  "scripts": {
+    "build": "npm run build -w @monday/agent-core && npm run build -w @monday/worker && npm run build -w @monday/api && npm run build -w @monday/dashboard",
+    "dev:api": "npm run dev -w @monday/api",
+    "dev:worker": "npm run dev -w @monday/worker",
+    "dev:dashboard": "npm run dev -w @monday/dashboard"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

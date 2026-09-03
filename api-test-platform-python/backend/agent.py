@@ -43,6 +43,8 @@ from deepagents.backends import (
 from deepagents.backends.protocol import ExecuteResponse
 from langchain.agents.middleware import before_agent
 from langchain.agents.middleware.types import AgentState
+from langchain.chat_models import init_chat_model
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.runtime import Runtime
@@ -254,6 +256,16 @@ MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "deepseek")
 MODEL_NAME = os.getenv("MODEL_NAME", "deepseek-v4-flash")
 MODEL_SPEC = f"{MODEL_PROVIDER}:{MODEL_NAME}"
 
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "600"))
+LLM_STREAM_CHUNK_TIMEOUT = float(os.getenv("LLM_STREAM_CHUNK_TIMEOUT", "600"))
+LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "3"))
+LLM_USE_RESPONSES_API = os.getenv("LLM_USE_RESPONSES_API", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
 # ── DeepAgents backend ──
 BACKEND_TYPE = os.getenv("BACKEND_TYPE", "local_shell").lower().strip()
 BACKEND_ROOT_DIR = Path(os.getenv("BACKEND_ROOT_DIR", os.getcwd())).resolve()
@@ -304,16 +316,27 @@ def _build_backend():
     return shell_backend
 
 
+def _build_chat_model() -> BaseChatModel:
+    """Build LLM client with extended timeouts for long NPU/Higress streaming runs."""
+    return init_chat_model(
+        MODEL_SPEC,
+        timeout=LLM_TIMEOUT,
+        stream_chunk_timeout=LLM_STREAM_CHUNK_TIMEOUT,
+        max_retries=LLM_MAX_RETRIES,
+        use_responses_api=LLM_USE_RESPONSES_API,
+    )
+
+
 # ═══════════════════════════════════════════════════════
 # 4 Sub-Agent Definitions
 # ═══════════════════════════════════════════════════════
 
-def _build_subagents() -> list[dict]:
+def _build_subagents(chat_model: BaseChatModel) -> list[dict]:
     """Build the 4 sub-agent configurations."""
-    ca = get_code_analyzer_config(MODEL_SPEC)
-    at = get_api_tester_config(MODEL_SPEC)
-    tg = get_test_generator_config(MODEL_SPEC)
-    rw = get_report_writer_config(MODEL_SPEC)
+    ca = get_code_analyzer_config(chat_model)
+    at = get_api_tester_config(chat_model)
+    tg = get_test_generator_config(chat_model)
+    rw = get_report_writer_config(chat_model)
 
     return [
         {**ca, "tools": list(CODE_TOOLS) + list(PROJECT_TOOLS)},
@@ -363,8 +386,12 @@ SUPERVISOR_PROMPT = f"""你是 **API 智能测试平台 (API Test Platform)** �
 ### 工作流 2：自动生成测试用例
 ```
 用户："基于 OpenAPI 规范生成完整的 API 测试用例"
-  → test-generator: 解析 OpenAPI，生成结构化测试用例
+  → test-generator: 解析 OpenAPI 或扫描源码中的 Controller
+  → 按模块分批生成（每次 1 个 Controller 或 ≤10 个接口），每批写入 {API_TEST_DIR.as_posix()}
+  → 全部批次完成后汇总用例清单
 ```
+无 OpenAPI 时：先 glob/read_file 列出 controller 文件，**禁止**一次性输出全项目用例。
+若某批失败，汇报已完成部分并建议用户继续下一批。
 
 ### 工作流 3：接口功能测试（生成并执行）
 ```
@@ -450,13 +477,14 @@ async def get_agent():
 
     await init_db()
 
-    subagents = _build_subagents()
+    chat_model = _build_chat_model()
+    subagents = _build_subagents(chat_model)
     print(f"[Supervisor] Creating agent with {len(subagents)} subagents:")
     for s in subagents:
         print(f"  - {s['name']}: {s['description'][:60]}...")
 
     _agent_graph = create_deep_agent(
-        model=MODEL_SPEC,
+        model=chat_model,
         tools=list(SUPERVISOR_TOOLS),
         system_prompt=SUPERVISOR_PROMPT,
         subagents=subagents,

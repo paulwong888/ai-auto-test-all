@@ -58,7 +58,7 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="但问智能 API 测试平台",
+    title="智能 API 测试平台",
     description="Enterprise Intelligent API Test Platform — Management API",
     version="1.0.0",
     lifespan=_lifespan,

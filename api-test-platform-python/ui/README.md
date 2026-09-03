@@ -1,6 +1,6 @@
-# 但问智能 API 测试平台
+# 智能 API 测试平台
 
-但问智能 API 测试平台是一个基于 Next.js 的智能 API 测试前端，支持通过对话界面与智能测试 Agent 交互。
+智能 API 测试平台是一个基于 Next.js 的智能 API 测试前端，支持通过对话界面与智能测试 Agent 交互。
 
 > [!NOTE]
 > 🎥 Watch the video setup guide [here](https://youtu.be/lInrwVnZ83o).

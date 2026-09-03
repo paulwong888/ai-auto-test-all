@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from langchain_core.language_models import BaseChatModel
+
 CODE_ANALYZER_PROMPT = """你是 API 智能测试平台的 **代码分析专家**，专注于一件事：
 **代码变更 → API 回归测试范围推荐**。
 
@@ -113,7 +115,7 @@ CODE_ANALYZER_PROMPT = """你是 API 智能测试平台的 **代码分析专家*
 """
 
 
-def get_code_analyzer_config(model_spec: str) -> dict:
+def get_code_analyzer_config(model: str | BaseChatModel) -> dict:
     """Get code-analyzer sub-agent configuration."""
     return {
         "name": "code-analyzer",
@@ -123,5 +125,5 @@ def get_code_analyzer_config(model_spec: str) -> dict:
             "当用户问'分析代码变更'、'影响哪些 API'、'需要回归测试什么'时使用。"
         ),
         "system_prompt": CODE_ANALYZER_PROMPT,
-        "model": model_spec,
+        "model": model,
     }

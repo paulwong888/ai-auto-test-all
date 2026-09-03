@@ -1,0 +1,150 @@
+name: ${COMPOSE_PROJECT_NAME:-ai-auto-test-monday}
+
+services:
+  temporal-postgresql:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    volumes:
+      - temporal_pg_data:/var/lib/postgresql/data
+    networks:
+      - monday-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    depends_on:
+      temporal-postgresql:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      POSTGRES_SEEDS: temporal-postgresql
+    networks:
+      - monday-net
+
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:${TEMPORAL_UI_PORT:-8088},http://127.0.0.1:${TEMPORAL_UI_PORT:-8088}
+    ports:
+      - "0.0.0.0:${TEMPORAL_UI_PORT:-8088}:8080"
+    networks:
+      - monday-net
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - monday-net
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api/Dockerfile
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3010"
+      TEMPORAL_ADDRESS: temporal:7233
+      REDIS_URL: redis://redis:6379
+      ARTIFACTS_BASE_DIR: /data/artifacts
+      REPOS_BASE_DIR: /data/repos
+      POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5433}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_auto_test_monday}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=accept-new"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data/artifacts:/data/artifacts
+      - ./data/repos:/data/repos
+      - ${EXTERNAL_REPOS_HOST_PATH:-./data/repos/external}:${EXTERNAL_REPOS_CONTAINER_PATH:-/data/repos/external}:ro
+      - ${GIT_SSH_HOST_PATH:-${HOME}/.ssh}:/root/.ssh:ro
+    ports:
+      - "0.0.0.0:${API_PORT:-3010}:3010"
+    depends_on:
+      - temporal
+      - redis
+    networks:
+      - monday-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3010/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/worker/Dockerfile
+    env_file:
+      - .env
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      REDIS_URL: redis://redis:6379
+      ARTIFACTS_BASE_DIR: /data/artifacts
+      REPOS_BASE_DIR: /data/repos
+      HIGRESS_BASE_URL: ${HIGRESS_BASE_URL:-http://host.docker.internal:8004/v1}
+      HIGRESS_API_KEY: ${HIGRESS_API_KEY:-not-needed}
+      LLM_MODEL: ${LLM_MODEL:-ds-v4-flash-0731-dspark}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-600}
+      LLM_STREAM_CHUNK_TIMEOUT: ${LLM_STREAM_CHUNK_TIMEOUT:-600}
+      SCAN_MAX_FILES: ${SCAN_MAX_FILES:-300}
+      SCAN_MAX_COMPONENTS: ${SCAN_MAX_COMPONENTS:-80}
+      POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5433}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_auto_test_monday}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data/artifacts:/data/artifacts
+      - ./data/repos:/data/repos
+      - ${EXTERNAL_REPOS_HOST_PATH:-./data/repos/external}:${EXTERNAL_REPOS_CONTAINER_PATH:-/data/repos/external}:ro
+    depends_on:
+      temporal:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    networks:
+      - monday-net
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/dashboard/Dockerfile
+    ports:
+      - "0.0.0.0:${DASHBOARD_PORT:-8040}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - monday-net
+
+networks:
+  monday-net:
+    driver: bridge
+
+volumes:
+  temporal_pg_data:

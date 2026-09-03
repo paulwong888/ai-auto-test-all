@@ -77,7 +77,7 @@ cp .env.example .env
 
 平台在容器内共享 Playwright（`NODE_PATH`），业务项目无需 `npm install @playwright/test`。
 
-**Pi skill 与 AGENTS 更新**：修改 `docker/skills/e2e-test-env/` 或脚手架 `AGENTS.md` 后，需 `./build.sh` 重建 server 镜像（或热更新容器内 `/etc/pi-agent/skills`）。已有业务项目的 `.pi/AGENTS.md` 不会自动覆盖，请重新「初始化模板」或手动合并段落。
+**Pi skill 与 AGENTS 更新**：修改 `docker/skills/`（含 `e2e-test-env/`、`component-aware-web-automation/`）或脚手架 `AGENTS.md` 后，需 `./build.sh` 重建 server 镜像（或热更新容器内 `/etc/pi-agent/skills`）。已有业务项目的 `.pi/AGENTS.md` 不会自动覆盖，请重新「初始化模板」或手动合并段落。
 
 **Playwright 重跑上限**：`RUN_MAX_PLAYWRIGHT_ATTEMPTS`（默认 3）限制单次 Dashboard run 内针对目标 spec 的 bash playwright 次数；失败摘要写入项目 `{repoPath}/.pi/run-history.json`（默认 gitignore）。
 

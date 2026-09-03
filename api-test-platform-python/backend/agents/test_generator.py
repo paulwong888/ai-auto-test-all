@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from langchain_core.language_models import BaseChatModel
+
 TEST_GENERATOR_PROMPT = """你是 API 智能测试平台的 **测试用例生成专家**。
 
 你负责从 OpenAPI/Swagger 规范自动生成高质量的 API 测试用例和可执行的 pytest 脚本。
@@ -32,11 +34,14 @@ TEST_GENERATOR_PROMPT = """你是 API 智能测试平台的 **测试用例生成
 ### 流程 1：自动生成测试用例
 ```
 用户："基于 OpenAPI 生成测试用例"
-  → parse_openapi_spec(spec_path="swagger.json")
-  → 分析接口清单，了解 API 结构
-  → generate_api_test_cases(spec_path="swagger.json")
-  → 获得结构化测试用例
+  → parse_openapi_spec(spec_path="swagger.json") 或 glob/read_file 扫描 Controller
+  → 按模块分批（每次 1 个 Controller 或 ≤10 个接口）：
+      → generate_api_test_cases(...) 生成该批用例
+      → 写入 API_TEST_DIR 下对应文件
+  → 全部批次完成后汇总用例清单
 ```
+无 OpenAPI 时：先列出 controller 文件，**禁止**一次性输出全项目用例。
+若某批失败，汇报已完成部分并建议用户继续下一批。
 
 ### 流程 2：生成特定类型的测试
 ```
@@ -79,7 +84,7 @@ TEST_GENERATOR_PROMPT = """你是 API 智能测试平台的 **测试用例生成
 """
 
 
-def get_test_generator_config(model_spec: str) -> dict:
+def get_test_generator_config(model: str | BaseChatModel) -> dict:
     """Get test-generator sub-agent configuration."""
     return {
         "name": "test-generator",
@@ -89,5 +94,5 @@ def get_test_generator_config(model_spec: str) -> dict:
             "当用户问'生成测试'、'创建用例'、'从 Swagger 生成'、'接口功能测试'时使用。"
         ),
         "system_prompt": TEST_GENERATOR_PROMPT,
-        "model": model_spec,
+        "model": model,
     }

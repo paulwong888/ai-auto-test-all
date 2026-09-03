@@ -143,7 +143,7 @@ export default function AdminPage() {
             <PlatformLogoSVG width={36} height={36} />
             <div>
               <h1 className="text-xl font-semibold tracking-tight">
-                但问智能 API 测试平台
+                智能 API 测试平台
               </h1>
               <p className="text-muted-foreground text-sm">管理后台</p>
             </div>

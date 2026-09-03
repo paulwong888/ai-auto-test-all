@@ -116,6 +116,10 @@ cp .env.example .env
 | `OPENAI_BASE_URL` | OpenAI 兼容接口地址 | `http://host.docker.internal:8004/v1`（Higress → NPU） |
 | `MODEL_PROVIDER` | 模型 provider | `openai` |
 | `MODEL_NAME` | 模型名称 | `ds-v4-flash-0731-dspark`（NPU DeepSeek V4） |
+| `LLM_TIMEOUT` | LLM 请求总超时（秒） | `600` |
+| `LLM_STREAM_CHUNK_TIMEOUT` | 流式 chunk 间隔超时（秒） | `600` |
+| `LLM_MAX_RETRIES` | LLM 失败重试次数 | `3` |
+| `LLM_USE_RESPONSES_API` | 是否使用 `/v1/responses` | `true` |
 | `BACKEND_ROOT_DIR` | Agent 可访问的工作根目录 | 项目绝对路径 |
 | `CODEGRAPH_DEFAULT_PROJECT` | CodeGraph 分析目标路径 | 项目绝对路径 |
 | `POSTGRES_*` | PostgreSQL 连接信息 | 见 `docker/.env.example` |
