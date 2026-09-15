@@ -24,6 +24,7 @@ describe("playwright-runner", () => {
     assert.match(cmd, /PLAYWRIGHT_BASE_URL='http:\/\/172\.26\.9\.212:8026'/);
     assert.match(cmd, /playwright\.config\.ts tests\/e2e\/foo\.spec\.ts/);
     assert.match(cmd, /\.env\.e2e/);
+    assert.match(cmd, /true;/);
   });
 
   it("isPlaywrightSpecCommand matches cli.js and npx forms", () => {

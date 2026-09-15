@@ -27,6 +27,12 @@ interface ProjectForm {
   targetUrl: string;
 }
 
+function isMountOnlyProject(p: ProjectRecord): boolean {
+  const override = p.localPathOverride?.trim();
+  if (!override) return false;
+  return !p.frontendGitUrl?.trim() && !p.backendGitUrl?.trim();
+}
+
 const emptyForm = (): ProjectForm => ({
   id: "",
   name: "",
@@ -223,7 +229,13 @@ export function ProjectPanel({
         <p className="hint">
           当前选中：<strong>{selected.name}</strong>
           {selected.cloneStatus !== "ready" && (
-            <> — 请先 Clone 再启动 pipeline</>
+            <>
+              {" "}
+              —{" "}
+              {isMountOnlyProject(selected)
+                ? "挂载路径尚不可用，请检查 local path override"
+                : "请先 Clone 再启动 pipeline"}
+            </>
           )}
         </p>
       )}

@@ -9,6 +9,8 @@
     "edit": "allow"
   },
   "bash": {
-    "npx playwright test *": "allow"
+    "node /app/sandbox-repos/demo-app/node_modules/@playwright/test/cli.js test *": "allow",
+    "NODE_PATH=* node * @playwright/test/cli.js test *": "allow",
+    "NODE_PATH=* PLAYWRIGHT_BASE_URL=* node * test *": "allow"
   }
 }

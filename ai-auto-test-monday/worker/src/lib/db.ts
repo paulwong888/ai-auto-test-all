@@ -15,6 +15,49 @@ function getPool(): pg.Pool {
   return pool;
 }
 
+export async function updateExecutionStatus(
+  runId: string,
+  status: "pending" | "running" | "completed" | "failed",
+  executionMode?: string,
+): Promise<void> {
+  try {
+    if (executionMode) {
+      await getPool().query(
+        `UPDATE pipeline_runs SET execution_status = $2, execution_mode = $3 WHERE id = $1`,
+        [runId, status, executionMode],
+      );
+    } else {
+      await getPool().query(
+        `UPDATE pipeline_runs SET execution_status = $2 WHERE id = $1`,
+        [runId, status],
+      );
+    }
+  } catch (err) {
+    console.warn("[db] updateExecutionStatus failed:", err);
+  }
+}
+
+export async function clearRunCurrentAgent(
+  runId: string,
+  clearOverlay = false,
+): Promise<void> {
+  try {
+    if (clearOverlay) {
+      await getPool().query(
+        `UPDATE pipeline_runs SET current_agent = NULL, overlay_workflow_id = NULL WHERE id = $1`,
+        [runId],
+      );
+    } else {
+      await getPool().query(
+        `UPDATE pipeline_runs SET current_agent = NULL WHERE id = $1`,
+        [runId],
+      );
+    }
+  } catch (err) {
+    console.warn("[db] clearRunCurrentAgent failed:", err);
+  }
+}
+
 export async function insertArtifactIndex(
   runId: string,
   agent: string,

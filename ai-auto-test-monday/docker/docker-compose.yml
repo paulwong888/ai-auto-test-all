@@ -77,6 +77,7 @@ services:
       - ./data/artifacts:/data/artifacts
       - ./data/repos:/data/repos
       - ${EXTERNAL_REPOS_HOST_PATH:-./data/repos/external}:${EXTERNAL_REPOS_CONTAINER_PATH:-/data/repos/external}:ro
+      - ${SANDBOX_REPOS_HOST_PATH:-../../ai-auto-test-platform/sandbox-repos}:${SANDBOX_REPOS_CONTAINER_PATH:-/data/repos/sandbox}:ro
       - ${GIT_SSH_HOST_PATH:-${HOME}/.ssh}:/root/.ssh:ro
     ports:
       - "0.0.0.0:${API_PORT:-3010}:3010"
@@ -105,11 +106,21 @@ services:
       REPOS_BASE_DIR: /data/repos
       HIGRESS_BASE_URL: ${HIGRESS_BASE_URL:-http://host.docker.internal:8004/v1}
       HIGRESS_API_KEY: ${HIGRESS_API_KEY:-not-needed}
-      LLM_MODEL: ${LLM_MODEL:-ds-v4-flash-0731-dspark}
-      LLM_TIMEOUT: ${LLM_TIMEOUT:-600}
+      LLM_MODEL: ${LLM_MODEL:-qwen38-27b-w8a8-mtp}
+      LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT:-medium}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-900}
+      CHOREOGRAPHER_LLM_TIMEOUT: ${CHOREOGRAPHER_LLM_TIMEOUT:-600}
+      LLM_STREAM_ENABLED: ${LLM_STREAM_ENABLED:-true}
       LLM_STREAM_CHUNK_TIMEOUT: ${LLM_STREAM_CHUNK_TIMEOUT:-600}
       SCAN_MAX_FILES: ${SCAN_MAX_FILES:-300}
       SCAN_MAX_COMPONENTS: ${SCAN_MAX_COMPONENTS:-80}
+      JOURNEY_MIN: ${JOURNEY_MIN:-5}
+      JOURNEY_MAX: ${JOURNEY_MAX:-8}
+      PLATFORM_BASE_URL: ${PLATFORM_BASE_URL:-http://host.docker.internal:3001}
+      PLATFORM_EXECUTION_ENABLED: ${PLATFORM_EXECUTION_ENABLED:-true}
+      EXECUTION_MODE: ${EXECUTION_MODE:-auto}
+      PLAYWRIGHT_CLI_PATH: ${PLAYWRIGHT_CLI_PATH:-/data/repos/sandbox/demo-app/node_modules/@playwright/test/cli.js}
+      PLAYWRIGHT_NODE_PATH: ${PLAYWRIGHT_NODE_PATH:-/data/repos/sandbox/demo-app/node_modules}
       POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
       POSTGRES_PORT: ${POSTGRES_PORT:-5433}
       POSTGRES_DB: ${POSTGRES_DB:-ai_auto_test_monday}
@@ -121,6 +132,8 @@ services:
       - ./data/artifacts:/data/artifacts
       - ./data/repos:/data/repos
       - ${EXTERNAL_REPOS_HOST_PATH:-./data/repos/external}:${EXTERNAL_REPOS_CONTAINER_PATH:-/data/repos/external}:ro
+      - ${SANDBOX_REPOS_HOST_PATH:-../../ai-auto-test-platform/sandbox-repos}:${SANDBOX_REPOS_CONTAINER_PATH:-/data/repos/sandbox}
+      - ${GIT_SSH_HOST_PATH:-${HOME}/.ssh}:/root/.ssh:ro
     depends_on:
       temporal:
         condition: service_started

@@ -13,7 +13,7 @@
 
 ```bash
 cd '<REPO>' && \
-[ -f .env.e2e ] && set -a && . ./.env.e2e && set +a && \
+{ [ -f .env.e2e ] && set -a && . ./.env.e2e && set +a; true; } && \
 NODE_PATH='/app/sandbox-repos/demo-app/node_modules' \
 PLAYWRIGHT_BASE_URL='<TARGET_URL>' \
 node '/app/sandbox-repos/demo-app/node_modules/@playwright/test/cli.js' \
@@ -24,7 +24,7 @@ node '/app/sandbox-repos/demo-app/node_modules/@playwright/test/cli.js' \
 
 ```bash
 cd '/data/repos/casemanagement-reduxfrontend' && \
-[ -f .env.e2e ] && set -a && . ./.env.e2e && set +a && \
+{ [ -f .env.e2e ] && set -a && . ./.env.e2e && set +a; true; } && \
 NODE_PATH='/app/sandbox-repos/demo-app/node_modules' \
 PLAYWRIGHT_BASE_URL='http://172.26.9.212:8026' \
 node '/app/sandbox-repos/demo-app/node_modules/@playwright/test/cli.js' \
@@ -35,7 +35,7 @@ node '/app/sandbox-repos/demo-app/node_modules/@playwright/test/cli.js' \
 
 ```bash
 cd '<REPO>' && \
-[ -f .env.e2e ] && set -a && . ./.env.e2e && set +a && \
+{ [ -f .env.e2e ] && set -a && . ./.env.e2e && set +a; true; } && \
 NODE_PATH='/app/sandbox-repos/demo-app/node_modules' \
 PLAYWRIGHT_BASE_URL='<TARGET_URL>' \
 node '/app/sandbox-repos/demo-app/node_modules/@playwright/test/cli.js' \

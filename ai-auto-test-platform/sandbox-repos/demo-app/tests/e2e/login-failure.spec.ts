@@ -9,7 +9,7 @@ test("使用错误账号密码登录失败", async ({ page }) => {
   await page.getByLabel("密码").fill("wrongpass");
 
   // When 点击登录按钮提交表单
-  await page.getByRole("button", { name: "登录" }).click();
+  await page.getByRole("button", { name: "登录按钮" }).click();
 
   // Then 页面显示“用户名或密码错误”的红色错误提示
   const errorAlert = page.getByRole("alert");

@@ -45,9 +45,17 @@ export function useRunWebSocket() {
   );
 
   const appendLog = useCallback((runId: string, stream: LiveLogLine["stream"], text: string) => {
-    if (runId !== activeRunIdRef.current) return;
-    logId.current += 1;
-    setLogs((prev) => [...prev.slice(-500), { id: String(logId.current), stream, text }]);
+    if (runId !== activeRunIdRef.current || !text) return;
+    setLogs((prev) => {
+      const next = prev.slice(-500);
+      const last = next[next.length - 1];
+      // LLM 流式 text_delta 逐 token 推送；合并到同一行避免每个词换行
+      if (stream === "ai" && last?.stream === "ai") {
+        return [...next.slice(0, -1), { ...last, text: last.text + text }];
+      }
+      logId.current += 1;
+      return [...next, { id: String(logId.current), stream, text }];
+    });
   }, []);
 
   const appendMilestone = useCallback(
@@ -166,13 +174,21 @@ export function useRunWebSocket() {
       setRunFinished(null);
       setTestReport(null);
       setMilestones([]);
-      setLogs(
-        restoredLogs.map((l, i) => ({
-          id: String(i + 1),
-          stream: l.stream,
-          text: l.text,
-        })),
-      );
+      const merged: LiveLogLine[] = [];
+      for (const line of restoredLogs) {
+        const last = merged[merged.length - 1];
+        if (line.stream === "ai" && last?.stream === "ai") {
+          last.text += line.text;
+        } else {
+          merged.push({
+            id: String(merged.length + 1),
+            stream: line.stream,
+            text: line.text,
+          });
+        }
+      }
+      logId.current = merged.length;
+      setLogs(merged);
     },
     [],
   );

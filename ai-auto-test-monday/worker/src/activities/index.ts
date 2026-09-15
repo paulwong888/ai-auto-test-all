@@ -1,17 +1,30 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { Context } from "@temporalio/activity";
 import type { PipelineInput } from "@monday/agent-core/workflow";
 import {
   runScriptAnalyst,
   runStageManager,
+  applyStageManagerPatches,
   runBlockingCoach,
   runSetDesigner,
+  runChoreographer,
+  runAssistantDirector,
+  runContinuityLead,
+  resolveAvailablePomsFromDir,
+  normalizePomExportClass,
+  pomFileNameToClassName,
   type ComponentRegistry,
   type TestIdInjections,
   type LocatorCatalog,
+  type JourneysDocument,
 } from "@monday/agent-core";
 import { publishProgress } from "../lib/redis.js";
-import { insertArtifactIndex } from "../lib/db.js";
+import {
+  clearRunCurrentAgent,
+  insertArtifactIndex,
+  updateExecutionStatus,
+} from "../lib/db.js";
 
 async function ensureDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
@@ -22,15 +35,23 @@ async function writeJson(filePath: string, data: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
 }
 
+function throwIfCancelled(): void {
+  if (Context.current().cancellationSignal.aborted) {
+    throw new Error("Activity cancelled");
+  }
+}
+
 async function notify(
   input: PipelineInput,
   agent: string,
   status: string,
+  extra?: Record<string, unknown>,
 ): Promise<void> {
   await publishProgress(input.runId, {
     agent,
     status,
     artifactRoot: input.artifactRoot,
+    ...extra,
   });
 }
 
@@ -45,6 +66,7 @@ async function readInjections(root: string): Promise<TestIdInjections> {
 }
 
 export async function scriptAnalyst(input: PipelineInput): Promise<void> {
+  throwIfCancelled();
   await notify(input, "scriptAnalyst", "started");
 
   const registry = await runScriptAnalyst({
@@ -59,25 +81,49 @@ export async function scriptAnalyst(input: PipelineInput): Promise<void> {
     componentCount: registry.components.length,
   });
 
+  throwIfCancelled();
   await notify(input, "scriptAnalyst", "completed");
 }
 
 export async function stageManager(input: PipelineInput): Promise<void> {
+  throwIfCancelled();
   await notify(input, "stageManager", "started");
 
   const registry = await readRegistry(input.artifactRoot);
-  const injections = runStageManager(registry);
+  const apply = input.applyTestIds === true;
+  const injections = runStageManager(registry, {
+    dryRun: !apply,
+    repoRoot: input.frontendPath,
+    runId: input.runId,
+  });
 
   const out = path.join(input.artifactRoot, "testid-injections.json");
   await writeJson(out, injections);
   await insertArtifactIndex(input.runId, "stageManager", "injections", out, {
     patchCount: injections.patches.length,
+    dryRun: injections.dryRun,
   });
 
+  if (apply) {
+    const report = await applyStageManagerPatches(
+      injections,
+      input.frontendPath,
+      input.runId,
+    );
+    const reportPath = path.join(input.artifactRoot, "apply-report.json");
+    await writeJson(reportPath, report);
+    await insertArtifactIndex(input.runId, "stageManager", "apply-report", reportPath, {
+      applied: report.applied,
+      failed: report.failed,
+    });
+  }
+
+  throwIfCancelled();
   await notify(input, "stageManager", "completed");
 }
 
 export async function blockingCoach(input: PipelineInput): Promise<void> {
+  throwIfCancelled();
   await notify(input, "blockingCoach", "started");
 
   const registry = await readRegistry(input.artifactRoot);
@@ -90,10 +136,12 @@ export async function blockingCoach(input: PipelineInput): Promise<void> {
     locatorCount: catalog.locators.length,
   });
 
+  throwIfCancelled();
   await notify(input, "blockingCoach", "completed");
 }
 
 export async function setDesigner(input: PipelineInput): Promise<void> {
+  throwIfCancelled();
   await notify(input, "setDesigner", "started");
 
   const registry = await readRegistry(input.artifactRoot);
@@ -103,13 +151,16 @@ export async function setDesigner(input: PipelineInput): Promise<void> {
   );
   const catalog = JSON.parse(catalogRaw) as LocatorCatalog;
 
-  const pomFiles = await runSetDesigner(registry, catalog);
+  let pomFiles = await runSetDesigner(registry, catalog);
   const pomDir = path.join(input.artifactRoot, "poms");
   await ensureDir(pomDir);
 
   for (const pom of pomFiles) {
-    const filePath = path.join(pomDir, pom.fileName);
-    await writeFile(filePath, pom.content, "utf8");
+    const safeName = path.basename(pom.fileName);
+    const filePath = path.join(pomDir, safeName);
+    const className = pomFileNameToClassName(safeName);
+    const content = normalizePomExportClass(pom.content, className);
+    await writeFile(filePath, content, "utf8");
     await insertArtifactIndex(
       input.runId,
       "setDesigner",
@@ -118,35 +169,143 @@ export async function setDesigner(input: PipelineInput): Promise<void> {
     );
   }
 
+  throwIfCancelled();
   await notify(input, "setDesigner", "completed");
 }
 
 export async function choreographer(input: PipelineInput): Promise<void> {
+  throwIfCancelled();
   await notify(input, "choreographer", "started");
-  const out = path.join(input.artifactRoot, "journeys.json");
-  await writeJson(out, {
-    journeys: [
-      {
-        id: "stub-journey",
-        title: "Stub user journey (M3)",
-        gherkinText:
-          "Scenario: Stub\\n  Given app is ready\\n  When user opens home\\n  Then page loads",
-        steps: ["navigateToHome", "assertPageReady"],
-      },
-    ],
-    note: "M3 will generate real journeys from registry",
-  });
-  await notify(input, "choreographer", "completed");
+
+  const registry = await readRegistry(input.artifactRoot);
+  const pomDir = path.join(input.artifactRoot, "poms");
+  const availablePoms = await resolveAvailablePomsFromDir(pomDir);
+  console.info(
+    `[choreographer] start runId=${input.runId} availablePoms=${availablePoms.join(", ")}`,
+  );
+
+  try {
+    const doc = await runChoreographer({
+      registry,
+      targetUrl: input.targetUrl,
+      availablePoms,
+    });
+
+    console.info(
+      `[choreographer] done runId=${input.runId} journeyCount=${doc.journeys.length}`,
+    );
+
+    const out = path.join(input.artifactRoot, "journeys.json");
+    await writeJson(out, doc);
+    await insertArtifactIndex(input.runId, "choreographer", "journeys", out, {
+      journeyCount: doc.journeys.length,
+    });
+
+    throwIfCancelled();
+    await notify(input, "choreographer", "completed");
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    await publishProgress(input.runId, {
+      agent: "choreographer",
+      status: "failed",
+      artifactRoot: input.artifactRoot,
+      error,
+    });
+    throw err;
+  }
 }
 
 export async function assistantDirector(input: PipelineInput): Promise<void> {
+  throwIfCancelled();
   await notify(input, "assistantDirector", "started");
-  const testsDir = path.join(input.artifactRoot, "tests");
-  await ensureDir(testsDir);
-  await writeFile(
-    path.join(testsDir, "sample.spec.ts"),
-    `import { test, expect } from '@playwright/test';\n\ntest('stub sample (M3)', async ({ page }) => {\n  await page.goto(${JSON.stringify(input.targetUrl ?? "/")});\n  expect(true).toBeTruthy();\n});\n`,
+
+  const journeysRaw = await readFile(
+    path.join(input.artifactRoot, "journeys.json"),
     "utf8",
   );
+  const journeysDoc = JSON.parse(journeysRaw) as JourneysDocument;
+
+  const catalogRaw = await readFile(
+    path.join(input.artifactRoot, "locator-catalog.json"),
+    "utf8",
+  );
+  const catalog = JSON.parse(catalogRaw) as LocatorCatalog;
+
+  const pomsDir = path.join(input.artifactRoot, "poms");
+  const testsDir = path.join(input.artifactRoot, "tests");
+  await ensureDir(testsDir);
+
+  const specs = await runAssistantDirector({
+    journeysDoc,
+    catalog,
+    pomsDir,
+    targetUrl: input.targetUrl,
+  });
+
+  for (const spec of specs) {
+    const filePath = path.join(testsDir, spec.fileName);
+    await writeFile(filePath, spec.content, "utf8");
+    await insertArtifactIndex(
+      input.runId,
+      "assistantDirector",
+      "spec",
+      filePath,
+      { journeyId: spec.journeyId },
+    );
+  }
+
+  throwIfCancelled();
   await notify(input, "assistantDirector", "completed");
+}
+
+export async function continuityLead(input: PipelineInput): Promise<void> {
+  throwIfCancelled();
+  await updateExecutionStatus(
+    input.runId,
+    "running",
+    input.executionMode,
+  );
+  await notify(input, "continuityLead", "started");
+
+  const report = await runContinuityLead({
+    projectId: input.projectId,
+    runId: input.runId,
+    artifactRoot: input.artifactRoot,
+    frontendPath: input.frontendPath,
+    targetUrl: input.targetUrl,
+    executionMode: input.executionMode,
+    platformBaseUrl: process.env.PLATFORM_BASE_URL,
+    projectName: input.projectId,
+    journeyIds: input.journeyIds,
+  });
+
+  const out = path.join(input.artifactRoot, "execution-report.json");
+  await writeJson(out, report);
+  await insertArtifactIndex(input.runId, "continuityLead", "execution-report", out, {
+    passed: report.summary.passed,
+    failed: report.summary.failed,
+  });
+
+  throwIfCancelled();
+  await updateExecutionStatus(
+    input.runId,
+    report.summary.failed === 0 ? "completed" : "failed",
+    input.executionMode,
+  );
+  // Keep overlay_workflow_id: the overlay workflow remains the authoritative
+  // progress source for this run after completion (queryable while Temporal
+  // retention lasts); clearing it would regress the run view to the stale
+  // original workflow state.
+  await clearRunCurrentAgent(input.runId);
+  await notify(input, "continuityLead", "completed");
+  await publishProgress(input.runId, {
+    agent: "continuityLead",
+    status:
+      report.summary.failed === 0 ? "execution-completed" : "execution-failed",
+    artifactRoot: input.artifactRoot,
+    error:
+      report.summary.failed > 0
+        ? `${report.summary.failed} journey(s) failed`
+        : undefined,
+  });
 }

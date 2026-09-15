@@ -1,7 +1,40 @@
+import path from "node:path";
 import type { ComponentRegistry, LocatorCatalog } from "../artifacts/types.js";
 import { pomGenerationSchema } from "../artifacts/types.js";
 import { loadLlmConfigFromEnv } from "../config.js";
 import { HigressClient } from "../llm/higress-client.js";
+import {
+  expectedPomFileName,
+  normalizePomExportClass,
+  pickLocatorExpr,
+  pomFileNameToClassName,
+  repairPomContent,
+} from "../lib/pom-utils.js";
+
+/** LLM may return source paths — normalize to flat `{Component}Page.ts`. */
+export function sanitizePomFileName(raw: string, componentName?: string): string {
+  if (componentName) {
+    return expectedPomFileName(componentName);
+  }
+  const base = path.basename(raw.replace(/\\/g, "/"));
+  const stripped = base
+    .replace(/\.(tsx?|jsx|vue|svelte|html)\.ts$/i, ".ts")
+    .replace(/\.(tsx?|jsx|vue|svelte|html)$/i, "");
+  const safe = stripped.replace(/[^a-zA-Z0-9_-]/g, "") || "Component";
+  const classStem = safe.endsWith("Page") ? safe : `${safe}Page`;
+  return `${classStem}.ts`;
+}
+
+function matchComponentForPomFile(
+  rawFileName: string,
+  registry: ComponentRegistry,
+): string | undefined {
+  const base = path.basename(rawFileName.replace(/\\/g, "/")).toLowerCase();
+  return registry.components.find((c) => {
+    const name = c.name.toLowerCase();
+    return base.includes(name) || base.includes(`${name}page`);
+  })?.name;
+}
 
 export interface PomFile {
   fileName: string;
@@ -12,8 +45,12 @@ export async function runSetDesigner(
   registry: ComponentRegistry,
   catalog: LocatorCatalog,
 ): Promise<PomFile[]> {
-  const llmFiles = await generateWithLlm(registry, catalog);
-  if (llmFiles.length > 0) return llmFiles;
+  try {
+    const llmFiles = await generateWithLlm(registry, catalog);
+    if (llmFiles.length > 0) return llmFiles;
+  } catch {
+    // fall through to deterministic POMs
+  }
   return generateDeterministic(registry, catalog);
 }
 
@@ -36,17 +73,29 @@ async function generateWithLlm(
 
   const llm = new HigressClient(loadLlmConfigFromEnv());
   const result = await llm.chatJson(
-    `Generate Playwright Page Object Model TypeScript files. Each class takes Page in constructor. Use semantic method names. Export classes. Return JSON { files: [{ fileName, content }] }. Max 5 files.`,
+    `Generate Playwright Page Object Model TypeScript files. Each class declares "private readonly page: Page;" as a field and assigns it explicitly in the constructor body: "constructor(page: Page) { this.page = page; ... }". Do NOT use TypeScript parameter properties (e.g. constructor(private readonly page: Page)) — they break at runtime. Use semantic method names. Export classes. Return JSON { files: [{ fileName, content }] }. Max 5 files.`,
     JSON.stringify({ components: summary }),
     pomGenerationSchema,
   );
 
   if (!result?.files?.length) return [];
 
-  return result.files.map((f) => ({
-    fileName: f.fileName.endsWith(".ts") ? f.fileName : `${f.fileName}.ts`,
-    content: f.content,
-  }));
+  return result.files
+    .filter((f) => f.content?.trim())
+    .map((f) => {
+      const componentName = matchComponentForPomFile(f.fileName, registry);
+      const fileName = sanitizePomFileName(f.fileName, componentName);
+      const className = pomFileNameToClassName(fileName);
+      const normalized = normalizePomExportClass(f.content, className);
+      return {
+        fileName,
+        content: repairPomContent(
+          normalized,
+          componentName ?? className.replace(/Page$/, ""),
+          catalog,
+        ),
+      };
+    });
 }
 
 function generateDeterministic(
@@ -74,12 +123,14 @@ function generateDeterministic(
       const prop = toPropName(loc.element);
       lines.push(`  readonly ${prop}: Locator;`);
     }
+    lines.push("  private readonly page: Page;");
 
     lines.push("");
-    lines.push(`  constructor(private readonly page: Page) {`);
+    lines.push(`  constructor(page: Page) {`);
+    lines.push("    this.page = page;");
     for (const loc of locs.slice(0, 12)) {
       const prop = toPropName(loc.element);
-      const expr = loc.priority[0]?.replace(/^page\./, "this.page.") ?? "this.page.locator('body')";
+      const expr = pickLocatorExpr(loc);
       lines.push(`    this.${prop} = ${expr};`);
     }
     lines.push("  }");
@@ -98,14 +149,14 @@ function generateDeterministic(
 
     files.push({
       fileName: `${comp.name}Page.ts`,
-      content: `${lines.join("\n")}\n`,
+      content: repairPomContent(`${lines.join("\n")}\n`, comp.name, catalog),
     });
   }
 
   if (files.length === 0) {
     files.push({
       fileName: "BasePage.ts",
-      content: `import type { Page } from '@playwright/test';\n\nexport class BasePage {\n  constructor(protected readonly page: Page) {}\n\n  async goto(url: string): Promise<void> {\n    await this.page.goto(url);\n  }\n}\n`,
+      content: `import type { Page } from '@playwright/test';\n\nexport class BasePage {\n  protected readonly page: Page;\n\n  constructor(page: Page) {\n    this.page = page;\n  }\n\n  async goto(url: string): Promise<void> {\n    await this.page.goto(url);\n  }\n}\n`,
     });
   }
 

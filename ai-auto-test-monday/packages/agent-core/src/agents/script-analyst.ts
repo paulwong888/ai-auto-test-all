@@ -2,7 +2,7 @@ import type { ComponentRegistry, RawComponent } from "../artifacts/types.js";
 import { scriptAnalystEnhancementSchema } from "../artifacts/types.js";
 import { loadLlmConfigFromEnv, loadScanConfigFromEnv } from "../config.js";
 import { HigressClient } from "../llm/higress-client.js";
-import { scanReactProject } from "../scanner/react-scanner.js";
+import { scanProject } from "../scanner/index.js";
 
 export interface ScriptAnalystInput {
   projectId: string;
@@ -16,7 +16,7 @@ export async function runScriptAnalyst(
   input: ScriptAnalystInput,
 ): Promise<ComponentRegistry> {
   const scanConfig = loadScanConfigFromEnv();
-  const scan = await scanReactProject(input.frontendPath, scanConfig);
+  const scan = await scanProject(input.frontendPath, scanConfig);
 
   let components = scan.components.filter(
     (c) => c.interactiveElements.length > 0 || c.state?.length,

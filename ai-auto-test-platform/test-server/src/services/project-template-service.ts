@@ -82,8 +82,11 @@ export class ProjectTemplateService {
       if (options.e2eUsername && options.e2ePassword) {
         await this.writeEnvE2e(resolved, targetUrl, options.e2eUsername, options.e2ePassword, created, skipped);
       } else {
+        await this.writePlaywrightBaseUrlEnv(resolved, targetUrl, created, skipped);
         warnings.push("未提供 SSO 帳密，請手動建立 .env.e2e");
       }
+    } else {
+      await this.writePlaywrightBaseUrlEnv(resolved, targetUrl, created, skipped);
     }
 
     await this.mergeGitignore(resolved, created, skipped);
@@ -121,6 +124,25 @@ export class ProjectTemplateService {
     }
     await fs.writeFile(dest, content);
     created.push(destRel);
+  }
+
+  private async writePlaywrightBaseUrlEnv(
+    repoPath: string,
+    targetUrl: string,
+    created: string[],
+    skipped: string[],
+  ): Promise<void> {
+    const dest = path.join(repoPath, ".env.e2e");
+    try {
+      await fs.access(dest);
+      skipped.push(".env.e2e");
+      return;
+    } catch {
+      /* create */
+    }
+
+    await fs.writeFile(dest, `PLAYWRIGHT_BASE_URL=${targetUrl}\n`);
+    created.push(".env.e2e");
   }
 
   private async writeEnvE2e(

@@ -16,7 +16,13 @@ export const pool = new pg.Pool({
 
 export async function migrate(): Promise<void> {
   const migrationsDir = path.join(__dirname, "migrations");
-  const files = ["001_init.sql", "002_clone_status.sql"];
+  const files = [
+    "001_init.sql",
+    "002_clone_status.sql",
+    "003_execution.sql",
+    "004_overlay_workflow.sql",
+    "005_run_options.sql",
+  ];
   for (const file of files) {
     const sql = await readFile(path.join(migrationsDir, file), "utf8");
     await pool.query(sql);

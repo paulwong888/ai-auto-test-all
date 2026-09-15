@@ -1,9 +1,11 @@
 import { Router } from "express";
 import { initTemplateInputSchema } from "../schemas/project.js";
+import { parseFeaturesDocument } from "../schemas/features.js";
 import type { ProjectService } from "../services/project-service.js";
 import type { ProjectTemplateService } from "../services/project-template-service.js";
 import type { ResolvedProject } from "../services/project-service.js";
 import type { FeatureService } from "../services/feature-service.js";
+import { FeaturesRepository } from "../repositories/features-repository.js";
 
 function parseInitTemplateOptions(
   body: unknown,
@@ -102,6 +104,24 @@ export function createProjectsRouter(
           req.body,
         );
         res.json({ ok: true, feature });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        res.status(400).json({ ok: false, error: message });
+      }
+    });
+
+    router.post("/:id/features/import", async (req, res) => {
+      try {
+        const project = await projectService.resolve(req.params.id!);
+        const doc = parseFeaturesDocument(req.body);
+        const featuresRepo = new FeaturesRepository();
+        const persisted = await featuresRepo.upsertFeaturesFromAudit(
+          project.id,
+          doc.repoPath || project.repoPath,
+          doc.features,
+          "import",
+        );
+        res.json({ ok: true, features: persisted });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         res.status(400).json({ ok: false, error: message });

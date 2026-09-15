@@ -51,12 +51,12 @@ export class ProjectEnvService {
       });
       return { ok: true, message: "Playwright 環境就緒" };
     } catch (err) {
+      const execErr = err as NodeJS.ErrnoException & { stderr?: string; stdout?: string };
       const detail =
-        err instanceof Error && "stderr" in err
-          ? String((err as NodeJS.ErrnoException & { stderr?: string }).stderr ?? err.message)
-          : err instanceof Error
-            ? err.message
-            : String(err);
+        execErr.stderr?.trim() ||
+        execErr.stdout?.trim() ||
+        (err instanceof Error ? err.message : String(err)) ||
+        `命令退出码 ${execErr.code ?? "unknown"}`;
       return {
         ok: false,
         message: `Playwright 環境檢查失敗：${detail.slice(0, 500)}`,

@@ -2,30 +2,27 @@ import { Redis } from "ioredis";
 import type { WebSocket } from "ws";
 import { config } from "../config.js";
 
-let redis: Redis | null = null;
 const subscriptions = new Map<string, Set<WebSocket>>();
+const subscribedChannels = new Set<string>();
 
-export function getRedisSubscriber(): Redis | null {
+let subscriber: Redis | null = null;
+let messageHandlerAttached = false;
+
+function getSubscriber(): Redis | null {
   if (!config.redisUrl) return null;
-  if (!redis) {
-    redis = new Redis(config.redisUrl, { maxRetriesPerRequest: 1 });
+  if (!subscriber) {
+    subscriber = new Redis(config.redisUrl, { maxRetriesPerRequest: 1 });
   }
-  return redis;
+  return subscriber;
 }
 
-export async function subscribeRun(ws: WebSocket, runId: string): Promise<void> {
-  if (!subscriptions.has(runId)) {
-    subscriptions.set(runId, new Set());
-  }
-  subscriptions.get(runId)!.add(ws);
-
-  const sub = getRedisSubscriber();
-  if (!sub) return;
-
-  const channel = `pipeline:${runId}`;
-  await sub.subscribe(channel);
-  sub.on("message", (ch, message) => {
-    if (ch !== channel) return;
+function attachMessageHandler(sub: Redis): void {
+  if (messageHandlerAttached) return;
+  messageHandlerAttached = true;
+  sub.on("message", (channel, message) => {
+    const runId = channel.startsWith("pipeline:")
+      ? channel.slice("pipeline:".length)
+      : channel;
     const sockets = subscriptions.get(runId);
     if (!sockets) return;
     for (const socket of sockets) {
@@ -36,12 +33,40 @@ export async function subscribeRun(ws: WebSocket, runId: string): Promise<void> 
   });
 }
 
+export async function subscribeRun(ws: WebSocket, runId: string): Promise<void> {
+  if (!subscriptions.has(runId)) {
+    subscriptions.set(runId, new Set());
+  }
+  subscriptions.get(runId)!.add(ws);
+
+  const sub = getSubscriber();
+  if (!sub) return;
+
+  attachMessageHandler(sub);
+
+  const channel = `pipeline:${runId}`;
+  if (!subscribedChannels.has(channel)) {
+    subscribedChannels.add(channel);
+    await sub.subscribe(channel);
+  }
+}
+
 export function unsubscribeRun(ws: WebSocket, runId: string): void {
-  subscriptions.get(runId)?.delete(ws);
+  const sockets = subscriptions.get(runId);
+  if (!sockets) return;
+  sockets.delete(ws);
+  if (sockets.size === 0) {
+    subscriptions.delete(runId);
+    const channel = `pipeline:${runId}`;
+    if (subscribedChannels.has(channel)) {
+      subscribedChannels.delete(channel);
+      void getSubscriber()?.unsubscribe(channel);
+    }
+  }
 }
 
 export async function checkRedis(): Promise<boolean> {
-  const sub = getRedisSubscriber();
+  const sub = getSubscriber();
   if (!sub) return true;
   try {
     await sub.ping();

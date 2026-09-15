@@ -4,7 +4,13 @@ export const TASK_QUEUE = "director-pipeline";
 
 export const WORKFLOW_NAME = "directorPipelineWorkflow";
 
+export const EXECUTE_WORKFLOW_NAME = "continuityLeadOnlyWorkflow";
+
+export const RESUME_WORKFLOW_NAME = "resumePipelineWorkflow";
+
 export const PROGRESS_QUERY = "getPipelineProgress";
+
+export const EXECUTE_PROGRESS_QUERY = "getExecuteProgress";
 
 export const AGENT_IDS = [
   "scriptAnalyst",
@@ -13,6 +19,7 @@ export const AGENT_IDS = [
   "setDesigner",
   "choreographer",
   "assistantDirector",
+  "continuityLead",
 ] as const;
 
 export type AgentId = (typeof AGENT_IDS)[number];
@@ -24,13 +31,17 @@ export const AGENT_LABELS: Record<AgentId, string> = {
   setDesigner: "Set Designer / 布景师",
   choreographer: "Choreographer / 编舞师",
   assistantDirector: "Assistant Director / 副导演",
+  continuityLead: "Continuity Lead / 场记",
 };
 
 export type PipelineStatus =
   | "pending"
   | "running"
   | "completed"
-  | "failed";
+  | "failed"
+  | "cancelled";
+
+export type ExecutionMode = "auto" | "platform" | "direct";
 
 export interface PipelineInput {
   projectId: string;
@@ -39,6 +50,11 @@ export interface PipelineInput {
   frontendPath: string;
   backendPath?: string;
   targetUrl?: string;
+  applyTestIds?: boolean;
+  executeAfterGenerate?: boolean;
+  executionMode?: ExecutionMode;
+  journeyIds?: string[];
+  startFromAgent?: AgentId;
 }
 
 export interface PipelineProgress {
@@ -49,6 +65,8 @@ export interface PipelineProgress {
   completedAgents: AgentId[];
   artifactRoot: string;
   error?: string;
+  executeAfterGenerate?: boolean;
+  skippedAgents?: AgentId[];
 }
 
 export interface AgentArtifactMeta {

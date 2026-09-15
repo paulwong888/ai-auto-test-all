@@ -36,7 +36,7 @@ description: AI 自动化测试平台 E2E 环境：共享 Playwright 运行命�
 
 ```bash
 cd '<项目根目录>' && \
-[ -f .env.e2e ] && set -a && . ./.env.e2e && set +a && \
+{ [ -f .env.e2e ] && set -a && . ./.env.e2e && set +a; true; } && \
 NODE_PATH='/app/sandbox-repos/demo-app/node_modules' \
 PLAYWRIGHT_BASE_URL='<被测URL>' \
 node '/app/sandbox-repos/demo-app/node_modules/@playwright/test/cli.js' \

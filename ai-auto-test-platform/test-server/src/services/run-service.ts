@@ -83,9 +83,15 @@ export class RunService {
 
   private appendRunLog(stream: ActiveRunLog["stream"], text: string): void {
     if (!this.activeSnapshot || !text) return;
-    this.activeSnapshot.logs.push({ stream, text });
-    if (this.activeSnapshot.logs.length > 300) {
-      this.activeSnapshot.logs.splice(0, this.activeSnapshot.logs.length - 300);
+    const logs = this.activeSnapshot.logs;
+    const last = logs[logs.length - 1];
+    if (stream === "ai" && last?.stream === "ai") {
+      last.text += text;
+    } else {
+      logs.push({ stream, text });
+    }
+    if (logs.length > 300) {
+      logs.splice(0, logs.length - 300);
     }
   }
 
@@ -172,6 +178,7 @@ export class RunService {
       projectId ?? (await this.projectService.resolveIdByRepoPath(repoPath)) ?? undefined;
     let lastPlaywrightOk = false;
     let stoppedByCap = false;
+    let lastErrorHint = "";
     const bashDeduper = new BashStreamDeduper();
     const playwrightOutputChunks: string[] = [];
     let collectingPlaywrightOutput = false;
@@ -276,6 +283,7 @@ export class RunService {
           break;
         }
         case "error":
+          lastErrorHint = event.message;
           emitLog("stderr", event.message);
           break;
         default:
@@ -334,7 +342,11 @@ export class RunService {
         ? `已达最大 Playwright 重试次数（${this.config.runMaxPlaywrightAttempts}）`
         : success
           ? "劇本執行成功，Then 斷言已通過"
-          : "劇本執行失敗，請查看直播間日誌";
+          : lastErrorHint
+            ? `劇本執行失敗：${lastErrorHint}`
+            : lastPlaywrightOk
+              ? "劇本執行失敗，請查看直播間日誌"
+              : "劇本執行失敗：Pi Agent 未成功執行 Playwright（請查看直播間日誌）";
 
       this.broadcast({
         type: "run_finished",

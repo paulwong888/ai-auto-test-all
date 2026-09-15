@@ -25,9 +25,9 @@ export function resolvePlaywrightRunnerPaths(config: AppConfig): PlaywrightRunne
 }
 
 /** Load .env.e2e into shell when present (Keycloak credentials). */
-export function buildEnvFileSource(repoPath: string): string {
-  void repoPath;
-  return `[ -f .env.e2e ] && set -a && . ./.env.e2e && set +a`;
+export function buildEnvFileSource(): string {
+  // Brace group + trailing `true` keeps the outer `&&` chain alive when .env.e2e is absent.
+  return `{ [ -f .env.e2e ] && set -a && . ./.env.e2e && set +a; true; }`;
 }
 
 /**
@@ -42,7 +42,7 @@ export function buildPlaywrightTestCommand(
   extraArgs = "",
 ): string {
   const { cliPath, nodePath } = resolvePlaywrightRunnerPaths(config);
-  const envSource = buildEnvFileSource(repoPath);
+  const envSource = buildEnvFileSource();
   const args = [`test`, `--config`, `playwright.config.ts`, specFile, extraArgs]
     .filter(Boolean)
     .join(" ");
