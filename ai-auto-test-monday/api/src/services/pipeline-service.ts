@@ -356,10 +356,28 @@ export async function getPipelineRun(runId: string): Promise<{
         );
       }
       if (
+        run.execution_status === "failed" &&
+        run.status === "running"
+      ) {
+        await pool.query(
+          `UPDATE pipeline_runs SET status = 'failed', finished_at = COALESCE(finished_at, NOW()), current_agent = NULL WHERE id = $1`,
+          [runId],
+        );
+      } else if (
+        run.execution_status === "completed" &&
+        run.status === "running" &&
+        generationFinished
+      ) {
+        await pool.query(
+          `UPDATE pipeline_runs SET status = 'completed', finished_at = COALESCE(finished_at, NOW()), current_agent = NULL WHERE id = $1`,
+          [runId],
+        );
+      } else if (
         generationFinished &&
         run.status === "running" &&
         !generationFailed &&
-        !overlayId
+        !overlayId &&
+        run.execution_status !== "failed"
       ) {
         await pool.query(
           `UPDATE pipeline_runs SET status = 'completed', current_agent = NULL WHERE id = $1`,

@@ -185,6 +185,27 @@ async function loadPomMethods(
   return map;
 }
 
+function findMissingJourneyMethods(
+  journey: Journey,
+  pomMethods: Map<string, Set<string>>,
+): string[] {
+  const missing: string[] = [];
+  for (const step of journey.steps) {
+    const methods = pomMethods.get(step.pom);
+    if (!methods?.has(step.method)) {
+      missing.push(`${step.pom}.${step.method}`);
+    }
+  }
+  return missing;
+}
+
+function journeyMethodsSatisfied(
+  journey: Journey,
+  pomMethods: Map<string, Set<string>>,
+): boolean {
+  return findMissingJourneyMethods(journey, pomMethods).length === 0;
+}
+
 export async function runAssistantDirector(
   input: AssistantDirectorInput,
 ): Promise<SpecFile[]> {
@@ -201,12 +222,22 @@ export async function runAssistantDirector(
   const specs: SpecFile[] = [];
 
   for (const journey of journeys) {
+    let methods = pomMethods;
+    if (!journeyMethodsSatisfied(journey, methods)) {
+      await enrichPomsForJourneys([journey], input.pomsDir, input.catalog);
+      methods = await loadPomMethods(input.pomsDir, allPoms);
+    }
+
     let content =
       (await tryLlmSpec(journey, targetUrl, input.pomsDir)) ??
-      buildDeterministicSpec(journey, targetUrl, pomMethods);
+      buildDeterministicSpec(journey, targetUrl, methods);
 
     if (violatesSpecDiscipline(content)) {
-      content = buildDeterministicSpec(journey, targetUrl, pomMethods);
+      content = buildDeterministicSpec(journey, targetUrl, methods);
+    }
+
+    if (!journeyMethodsSatisfied(journey, methods)) {
+      content = buildDeterministicSpec(journey, targetUrl, methods);
     }
 
     specs.push({

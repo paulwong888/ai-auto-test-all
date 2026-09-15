@@ -43,10 +43,15 @@ export async function continuityLeadOnlyWorkflow(
   setHandler(getExecuteProgress, () => progress);
 
   try {
-    await continuityLeadActivities.continuityLead(input);
+    const execResult = await continuityLeadActivities.continuityLead(input);
     progress.completedAgents.push("continuityLead");
     progress.currentAgent = null;
-    progress.status = "completed";
+    if (execResult.failed > 0) {
+      progress.status = "failed";
+      progress.error = `${execResult.failed} journey(s) failed`;
+    } else {
+      progress.status = "completed";
+    }
     return progress;
   } catch (err) {
     progress.status = "failed";

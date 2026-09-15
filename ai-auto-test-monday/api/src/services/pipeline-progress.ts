@@ -106,6 +106,17 @@ export function mergeExecuteProgress(
           ]),
         ] as AgentId[]);
 
+    let status = execProgress.status;
+    let error = execProgress.error;
+    // Overlay workflow may report "completed" after the activity ran; DB
+    // execution_status reflects whether journeys actually passed.
+    if (executionStatus === "failed") {
+      status = "failed";
+      error = error ?? "execution failed";
+    } else if (executionStatus === "completed") {
+      status = "completed";
+    }
+
     return {
       ...execProgress,
       projectId: String(run.project_id),
@@ -114,6 +125,10 @@ export function mergeExecuteProgress(
       completedAgents,
       skippedAgents: [],
       executeAfterGenerate: true,
+      status,
+      error,
+      currentAgent:
+        executionStatus === "running" ? execProgress.currentAgent : null,
     };
   }
 

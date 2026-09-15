@@ -102,12 +102,24 @@ export async function resumePipelineWorkflow(
       }
 
       progress.currentAgent = agentId;
-      await ACTIVITY_MAP[agentId](input);
+      const result = await ACTIVITY_MAP[agentId](input);
       progress.completedAgents.push(agentId);
+      if (
+        agentId === "continuityLead" &&
+        result &&
+        typeof result === "object" &&
+        "failed" in result &&
+        (result as { failed: number }).failed > 0
+      ) {
+        progress.status = "failed";
+        progress.error = `${(result as { failed: number }).failed} journey(s) failed`;
+      }
     }
 
     progress.currentAgent = null;
-    progress.status = "completed";
+    if (progress.status !== "failed") {
+      progress.status = "completed";
+    }
     return progress;
   } catch (err) {
     if (err instanceof Error && err.message.includes("cancelled")) {

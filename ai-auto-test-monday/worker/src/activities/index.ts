@@ -258,7 +258,15 @@ export async function assistantDirector(input: PipelineInput): Promise<void> {
   await notify(input, "assistantDirector", "completed");
 }
 
-export async function continuityLead(input: PipelineInput): Promise<void> {
+export interface ContinuityLeadResult {
+  failed: number;
+  passed: number;
+  total: number;
+}
+
+export async function continuityLead(
+  input: PipelineInput,
+): Promise<ContinuityLeadResult> {
   throwIfCancelled();
   await updateExecutionStatus(
     input.runId,
@@ -308,4 +316,10 @@ export async function continuityLead(input: PipelineInput): Promise<void> {
         ? `${report.summary.failed} journey(s) failed`
         : undefined,
   });
+
+  return {
+    failed: report.summary.failed,
+    passed: report.summary.passed,
+    total: report.summary.total,
+  };
 }

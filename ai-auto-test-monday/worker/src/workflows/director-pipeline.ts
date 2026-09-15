@@ -93,12 +93,19 @@ export async function directorPipelineWorkflow(
 
     if (executeAfterGenerate) {
       progress.currentAgent = "continuityLead";
-      await ACTIVITY_MAP.continuityLead(input);
+      const execResult = await ACTIVITY_MAP.continuityLead(input);
       progress.completedAgents.push("continuityLead");
-    } else {
-      progress.skippedAgents = ["continuityLead"];
+      progress.currentAgent = null;
+      if (execResult.failed > 0) {
+        progress.status = "failed";
+        progress.error = `${execResult.failed} journey(s) failed`;
+      } else {
+        progress.status = "completed";
+      }
+      return progress;
     }
 
+    progress.skippedAgents = ["continuityLead"];
     progress.currentAgent = null;
     progress.status = "completed";
     return progress;

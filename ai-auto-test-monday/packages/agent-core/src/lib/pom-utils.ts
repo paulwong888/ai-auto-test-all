@@ -86,6 +86,63 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+function findTextInputLoc(
+  locs: LocatorCatalog["locators"],
+): LocatorCatalog["locators"][number] | undefined {
+  return locs.find(
+    (l) =>
+      /text|user|email|username/i.test(l.element) && !/password/i.test(l.element),
+  );
+}
+
+function findPasswordInputLoc(
+  locs: LocatorCatalog["locators"],
+): LocatorCatalog["locators"][number] | undefined {
+  return locs.find((l) => /password/i.test(l.element));
+}
+
+function findButtonLoc(
+  locs: LocatorCatalog["locators"],
+): LocatorCatalog["locators"][number] | undefined {
+  return locs.find((l) => /button/i.test(l.element));
+}
+
+function findLocatorForAssertHint(
+  locs: LocatorCatalog["locators"],
+  hint: string,
+): LocatorCatalog["locators"][number] | undefined {
+  const h = hint.toLowerCase();
+  if (/password/.test(h)) {
+    return findPasswordInputLoc(locs);
+  }
+  if (/text|user|email|username/.test(h)) {
+    return findTextInputLoc(locs);
+  }
+  if (/form/.test(h)) {
+    return locs.find((l) => /form/i.test(l.element));
+  }
+  if (/button/.test(h)) {
+    return findButtonLoc(locs);
+  }
+  return (
+    locs.find((l) => h.includes(toPropName(l.element).toLowerCase())) ?? locs[0]
+  );
+}
+
+function fillParamName(method: string): string {
+  if (method === "enterUsername" || method === "fillUsername") return "username";
+  if (method === "enterPassword" || method === "fillPassword") return "password";
+  return "value";
+}
+
+function fillSingleInputMethod(method: string, prop: string): string {
+  const param = fillParamName(method);
+  return [
+    `  async ${method}(${param}: string): Promise<void> {`,
+    `    await this.${prop}.fill(${param});`,
+    "  }",
+  ].join("\n");
+}
 
 function genericAssertMethod(method: string): string {
   if (/Login|Redirect/i.test(method)) {
@@ -140,10 +197,43 @@ function methodBodyForStep(
     ].join("\n");
   }
 
+  const textFillMethods = new Set([
+    "fillTextInput",
+    "fillUsername",
+    "enterText",
+    "enterUsername",
+  ]);
+  if (textFillMethods.has(method)) {
+    const textLoc = findTextInputLoc(locs);
+    if (!textLoc) return null;
+    return fillSingleInputMethod(method, toPropName(textLoc.element));
+  }
+
+  const passwordFillMethods = new Set([
+    "fillPasswordInput",
+    "fillPassword",
+    "enterPassword",
+  ]);
+  if (passwordFillMethods.has(method)) {
+    const passLoc = findPasswordInputLoc(locs);
+    if (!passLoc) return null;
+    return fillSingleInputMethod(method, toPropName(passLoc.element));
+  }
+
+  if (method === "submitLogin") {
+    const buttonLoc = findButtonLoc(locs);
+    if (!buttonLoc) return null;
+    const prop = toPropName(buttonLoc.element);
+    return [
+      "  async submitLogin(): Promise<void> {",
+      `    await this.${prop}.click();`,
+      "  }",
+    ].join("\n");
+  }
+
   if (method === "enterCredentials" || method === "fillCredentials") {
-    const textLoc =
-      locs.find((l) => /text|user|email/i.test(l.element)) ?? locs[0];
-    const passLoc = locs.find((l) => /password/i.test(l.element)) ?? locs[1];
+    const textLoc = findTextInputLoc(locs) ?? locs[0];
+    const passLoc = findPasswordInputLoc(locs) ?? locs[1];
 
     const userExpr = textLoc
       ? `(this as unknown as { ${toPropName(textLoc.element)}: { fill: (v: string) => Promise<void> }; textInput?: { fill: (v: string) => Promise<void> } }).textInput ?? this.${toPropName(textLoc.element)}`
@@ -159,9 +249,10 @@ function methodBodyForStep(
     ].join("\n");
   }
 
-  const assertMatch = method.match(/^assert(.+)Visible$/);
+  const assertMatch = method.match(/^assert(.+?)Visible$/);
   if (assertMatch) {
-    const loc = locs[0]!;
+    const loc = findLocatorForAssertHint(locs, assertMatch[1]!);
+    if (!loc) return genericAssertMethod(method);
     const prop = toPropName(loc.element);
     return [
       `  async ${method}(): Promise<void> {`,
@@ -457,6 +548,81 @@ export function ensureLocatorAssignmentsInConstructor(
   );
 }
 
+const SEMANTIC_TEXT_PROPS = ["usernameInput", "textInput", "userInput"] as const;
+const SEMANTIC_PASSWORD_PROPS = ["passwordInput"] as const;
+const FORM_LOCATOR_PATTERN = /getByRole\s*\(\s*['"]form['"]/;
+
+function fixSemanticInputLocators(
+  content: string,
+  locators: LocatorCatalog["locators"],
+  componentName: string,
+): string {
+  const locs = locators.filter((l) => l.component === componentName);
+  const textLoc = findTextInputLoc(locs);
+  const passLoc = findPasswordInputLoc(locs);
+  if (!textLoc && !passLoc) return content;
+
+  let updated = content;
+
+  for (const prop of SEMANTIC_TEXT_PROPS) {
+    const re = new RegExp(`this\\.${prop}\\s*=\\s*([^;]+);`, "g");
+    updated = updated.replace(re, (match, rhs: string) => {
+      if (FORM_LOCATOR_PATTERN.test(rhs) && textLoc) {
+        return `this.${prop} = ${pickLocatorExpr(textLoc)};`;
+      }
+      return match;
+    });
+  }
+
+  for (const prop of SEMANTIC_PASSWORD_PROPS) {
+    const re = new RegExp(`this\\.${prop}\\s*=\\s*([^;]+);`, "g");
+    updated = updated.replace(re, (match, rhs: string) => {
+      if (FORM_LOCATOR_PATTERN.test(rhs) && passLoc) {
+        return `this.${prop} = ${pickLocatorExpr(passLoc)};`;
+      }
+      return match;
+    });
+  }
+
+  if (textLoc) {
+    const textProp = toPropName(textLoc.element);
+    updated = updated.replace(
+      /async enterUsername\([^)]*\): Promise<void> \{[\s\S]*?await this\.\w+\.fill\(\w+\);/,
+      `async enterUsername(username: string): Promise<void> {\n    await this.${textProp}.fill(username);`,
+    );
+  }
+
+  if (passLoc) {
+    const passProp = toPropName(passLoc.element);
+    updated = updated.replace(
+      /async enterPassword\([^)]*\): Promise<void> \{[\s\S]*?await this\.\w+\.fill\(\w+\);/,
+      `async enterPassword(password: string): Promise<void> {\n    await this.${passProp}.fill(password);`,
+    );
+  }
+
+  return updated;
+}
+
+/** Remove getters that conflict with readonly field declarations (runtime TypeError). */
+function removeConflictingPropertyGetters(content: string): string {
+  const fieldNames = new Set<string>();
+  for (const match of content.matchAll(
+    /(?:readonly|private readonly|protected readonly)\s+(\w+)\s*:/g,
+  )) {
+    fieldNames.add(match[1]!);
+  }
+
+  let updated = content;
+  for (const name of fieldNames) {
+    const getterRe = new RegExp(
+      `\\n\\s*(?:private|protected|public)?\\s*get\\s+${name}\\s*\\(\\)[\\s\\S]*?\\n\\s*\\}\\n?`,
+      "g",
+    );
+    updated = updated.replace(getterRe, "\n");
+  }
+  return updated;
+}
+
 export function dedupeAsyncMethods(content: string): string {
   const lines = content.split("\n");
   const result: string[] = [];
@@ -498,6 +664,8 @@ export function repairPomContent(
     componentName,
   );
   updated = rebuildConstructorAssignments(updated, componentName, catalog);
+  updated = fixSemanticInputLocators(updated, catalog.locators, componentName);
+  updated = removeConflictingPropertyGetters(updated);
   if (/\bexpect\s*\(/.test(updated)) {
     updated = ensureExpectImport(updated);
   }

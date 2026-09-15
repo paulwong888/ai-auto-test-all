@@ -71,6 +71,36 @@ describe("mergeExecuteProgress", () => {
     assert.ok(merged?.completedAgents.includes("assistantDirector"));
   });
 
+  it("prefers failed when exec overlay completed but execution_status is failed", () => {
+    const execProgress: PipelineProgress = {
+      projectId: "demo",
+      runId: "run-1",
+      status: "completed",
+      currentAgent: null,
+      completedAgents: [
+        "scriptAnalyst",
+        "stageManager",
+        "blockingCoach",
+        "setDesigner",
+        "choreographer",
+        "assistantDirector",
+        "continuityLead",
+      ],
+      artifactRoot: "/data/artifacts/demo/run-1",
+      executeAfterGenerate: true,
+    };
+
+    const run = {
+      ...baseRun,
+      status: "running",
+      execution_status: "failed",
+    };
+
+    const merged = mergeExecuteProgress(null, execProgress, run);
+    assert.equal(merged?.status, "failed");
+    assert.equal(merged?.currentAgent, null);
+  });
+
   it("returns failed when execution_status is failed and mainProgress completed", () => {
     const mainProgress: PipelineProgress = {
       projectId: "demo",
