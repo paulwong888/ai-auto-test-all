@@ -105,6 +105,11 @@ function readRunIdFromUrl(): string | null {
   return params.get("runId");
 }
 
+function readProjectIdFromUrl(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("projectId");
+}
+
 function setRunIdInUrl(runId: string | null): void {
   const url = new URL(window.location.href);
   if (runId) {
@@ -115,9 +120,19 @@ function setRunIdInUrl(runId: string | null): void {
   window.history.replaceState({}, "", url.toString());
 }
 
+function setProjectIdInUrl(projectId: string | null): void {
+  const url = new URL(window.location.href);
+  if (projectId) {
+    url.searchParams.set("projectId", projectId);
+  } else {
+    url.searchParams.delete("projectId");
+  }
+  window.history.replaceState({}, "", url.toString());
+}
+
 export default function App() {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useState(() => readProjectIdFromUrl() ?? "");
   const [runId, setRunId] = useState<string | null>(readRunIdFromUrl());
   const [progress, setProgress] = useState<Progress | null>(null);
   const [preview, setPreview] = useState<string>("");
@@ -142,6 +157,31 @@ export default function App() {
   } | null>(null);
   const previewScrollRef = useRef<HTMLDivElement>(null);
   const pollRunRef = useRef<(id: string) => Promise<void>>(async () => {});
+  const urlHydratedRef = useRef(false);
+
+  const clearRunViewState = useCallback(() => {
+    setRunId(null);
+    setProgress(null);
+    setActiveRun(null);
+    setPreview("");
+    setPreviewMeta("");
+    setActiveArtifactKey(null);
+    setPreviewError(null);
+    setJourneySpecOverlay(null);
+    setArtifactLinks([...BASE_ARTIFACT_LINKS]);
+    setLoading(false);
+    setExecutingOnly(false);
+  }, []);
+
+  const handleProjectSelect = useCallback(
+    (id: string) => {
+      setProjectId(id);
+      setProjectIdInUrl(id);
+      setRunIdInUrl(null);
+      clearRunViewState();
+    },
+    [clearRunViewState],
+  );
 
   const loadArtifactList = useCallback(async (id: string) => {
     const listRes = await fetch(`/api/pipeline/runs/${id}/artifacts/list`);
@@ -264,6 +304,8 @@ export default function App() {
     const list = (data.projects ?? []) as ProjectRecord[];
     setProjects(list);
     setProjectId((prev) => {
+      const fromUrl = readProjectIdFromUrl();
+      if (fromUrl && list.some((p) => p.id === fromUrl)) return fromUrl;
       if (prev && list.some((p) => p.id === prev)) return prev;
       return list[0]?.id ?? "";
     });
@@ -366,6 +408,11 @@ export default function App() {
             status: String(data.run.status),
             execution_status: execStatus,
           });
+          if (data.run.project_id) {
+            const pid = String(data.run.project_id);
+            setProjectId(pid);
+            setProjectIdInUrl(pid);
+          }
           // Sync start-option controls from the values stored in DB so
           // retries/resumes use what the run was started with ("选啥就是啥").
           if (
@@ -431,11 +478,28 @@ export default function App() {
   );
 
   useEffect(() => {
+    if (urlHydratedRef.current) return;
+    urlHydratedRef.current = true;
+    const urlProjectId = readProjectIdFromUrl();
+    if (urlProjectId) setProjectId(urlProjectId);
     const urlRunId = readRunIdFromUrl();
-    if (urlRunId && urlRunId !== runId) {
-      void loadHistoricalRun(urlRunId);
-    }
-  }, [loadHistoricalRun, runId]);
+    if (urlRunId) void loadHistoricalRun(urlRunId);
+  }, [loadHistoricalRun]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const urlProjectId = readProjectIdFromUrl();
+      setProjectId(urlProjectId ?? "");
+      const urlRunId = readRunIdFromUrl();
+      if (urlRunId) {
+        void loadHistoricalRun(urlRunId);
+      } else {
+        clearRunViewState();
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [clearRunViewState, loadHistoricalRun]);
 
   async function runExecuteJourneys(journeyIds: string[]) {
     if (!runId || journeyIds.length === 0) return;
@@ -551,6 +615,7 @@ export default function App() {
         );
       }
       setRunId(data.runId);
+      setProjectIdInUrl(projectId);
       setRunIdInUrl(data.runId);
       void pollRun(data.runId);
     } catch (e) {
@@ -740,13 +805,13 @@ export default function App() {
         projects={projects}
         selectedId={projectId}
         onRefresh={loadProjects}
-        onSelect={setProjectId}
+        onSelect={handleProjectSelect}
       />
 
       <div className="toolbar">
         <select
           value={projectId}
-          onChange={(e) => setProjectId(e.target.value)}
+          onChange={(e) => handleProjectSelect(e.target.value)}
           disabled={loading}
         >
           {projects.map((p) => (
