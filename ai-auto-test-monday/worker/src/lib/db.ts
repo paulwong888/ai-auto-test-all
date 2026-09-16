@@ -17,7 +17,7 @@ function getPool(): pg.Pool {
 
 export async function updateExecutionStatus(
   runId: string,
-  status: "pending" | "running" | "completed" | "failed",
+  status: "pending" | "running" | "completed" | "failed" | null,
   executionMode?: string,
 ): Promise<void> {
   try {

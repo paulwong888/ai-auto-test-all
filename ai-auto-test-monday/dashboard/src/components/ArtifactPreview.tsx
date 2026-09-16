@@ -11,10 +11,12 @@ function ExecutionReportView({
   data,
   onRetryJourneys,
   retryDisabled,
+  executionRunning,
 }: {
   data: ExecutionReportPreview;
   onRetryJourneys?: (journeyIds: string[]) => void;
   retryDisabled?: boolean;
+  executionRunning?: boolean;
 }) {
   const retryable = data.results.filter(
     (r) => r.status === "failed" || r.status === "flaky",
@@ -23,6 +25,16 @@ function ExecutionReportView({
 
   return (
     <div className="artifact-structured">
+      {executionRunning && (
+        <p className="hint warn">
+          补跑进行中：下方报告可能为上次执行结果
+          {data.generatedAt ? `（生成于 ${data.generatedAt}）` : ""}
+          ，完成后将自动刷新。
+        </p>
+      )}
+      {!executionRunning && data.generatedAt && (
+        <p className="hint muted">报告生成于 {data.generatedAt}</p>
+      )}
       <div className="artifact-stats">
         <span>模式 {data.executionMode}</span>
         <span>通过 {data.summary.passed}</span>
@@ -88,6 +100,7 @@ interface Props {
   onViewSpec?: (artifactKey: string) => void;
   onRetryJourneys?: (journeyIds: string[]) => void;
   retryDisabled?: boolean;
+  executionRunning?: boolean;
 }
 
 function tryParseJson<T>(text: string): T | null {
@@ -261,6 +274,7 @@ export function ArtifactPreview({
   onViewSpec,
   onRetryJourneys,
   retryDisabled,
+  executionRunning,
 }: Props) {
   if (artifactKey === "journeys") {
     const doc = tryParseJson<JourneysDocument>(content);
@@ -313,6 +327,7 @@ export function ArtifactPreview({
           data={data}
           onRetryJourneys={onRetryJourneys}
           retryDisabled={retryDisabled}
+          executionRunning={executionRunning}
         />
       );
     }
@@ -352,7 +367,8 @@ export function previewMetaForArtifact(
   if (artifactKey === "execution-report") {
     const doc = tryParseJson<ExecutionReportPreview>(content);
     if (!doc?.summary) return "";
-    return `通过 ${doc.summary.passed}/${doc.summary.total}`;
+    const ts = doc.generatedAt ? ` · ${doc.generatedAt}` : "";
+    return `通过 ${doc.summary.passed}/${doc.summary.total}${ts}`;
   }
   if (artifactKey.startsWith("spec-")) {
     const lines = content.split("\n").length;

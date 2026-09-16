@@ -144,7 +144,10 @@ function fillSingleInputMethod(method: string, prop: string): string {
   ].join("\n");
 }
 
-function genericAssertMethod(method: string): string {
+function genericAssertMethod(
+  method: string,
+  locs: LocatorCatalog["locators"] = [],
+): string {
   if (/Login|Redirect/i.test(method)) {
     return [
       `  async ${method}(): Promise<void> {`,
@@ -166,11 +169,19 @@ function genericAssertMethod(method: string): string {
       "  }",
     ].join("\n");
   }
+  if (locs.length > 0) {
+    const prop = toPropName(locs[0]!.element);
+    return [
+      `  async ${method}(): Promise<void> {`,
+      `    await expect(this.${prop}).toBeVisible();`,
+      "  }",
+    ].join("\n");
+  }
   return [
     `  async ${method}(): Promise<void> {`,
     "    await expect(this.page.locator('body')).toBeVisible();",
     "  }",
-    ].join("\n");
+  ].join("\n");
 }
 
 function methodBodyForStep(
@@ -205,8 +216,15 @@ function methodBodyForStep(
   ]);
   if (textFillMethods.has(method)) {
     const textLoc = findTextInputLoc(locs);
-    if (!textLoc) return null;
-    return fillSingleInputMethod(method, toPropName(textLoc.element));
+    if (textLoc) {
+      return fillSingleInputMethod(method, toPropName(textLoc.element));
+    }
+    const param = fillParamName(method);
+    return [
+      `  async ${method}(${param}: string): Promise<void> {`,
+      `    await this.page.getByRole('textbox').first().fill(${param});`,
+      "  }",
+    ].join("\n");
   }
 
   const passwordFillMethods = new Set([
@@ -216,8 +234,15 @@ function methodBodyForStep(
   ]);
   if (passwordFillMethods.has(method)) {
     const passLoc = findPasswordInputLoc(locs);
-    if (!passLoc) return null;
-    return fillSingleInputMethod(method, toPropName(passLoc.element));
+    if (passLoc) {
+      return fillSingleInputMethod(method, toPropName(passLoc.element));
+    }
+    const param = fillParamName(method);
+    return [
+      `  async ${method}(${param}: string): Promise<void> {`,
+      `    await this.page.locator('input[type=\"password\"]').first().fill(${param});`,
+      "  }",
+    ].join("\n");
   }
 
   if (method === "submitLogin") {
@@ -252,7 +277,7 @@ function methodBodyForStep(
   const assertMatch = method.match(/^assert(.+?)Visible$/);
   if (assertMatch) {
     const loc = findLocatorForAssertHint(locs, assertMatch[1]!);
-    if (!loc) return genericAssertMethod(method);
+    if (!loc) return genericAssertMethod(method, locs);
     const prop = toPropName(loc.element);
     return [
       `  async ${method}(): Promise<void> {`,
@@ -262,19 +287,43 @@ function methodBodyForStep(
   }
 
   if (method.startsWith("assert") || action === "assert_visible" || action === "assert_state") {
-    return genericAssertMethod(method);
+    return genericAssertMethod(method, locs);
   }
 
   if (!locs.length) return null;
 
+  if (/^select/i.test(method)) {
+    const selectLoc =
+      locs.find((l) => /select/i.test(l.element)) ?? locs[0];
+    if (!selectLoc) return null;
+    const prop = toPropName(selectLoc.element);
+    return [
+      `  async ${method}(value: string): Promise<void> {`,
+      `    await this.${prop}.selectOption(value);`,
+      "  }",
+    ].join("\n");
+  }
+
+  if (/^enter/i.test(method) || /^fill/i.test(method)) {
+    const textLoc = findTextInputLoc(locs) ?? locs[0];
+    if (!textLoc) return null;
+    const prop = toPropName(textLoc.element);
+    const param = fillParamName(method);
+    return [
+      `  async ${method}(${param}: string): Promise<void> {`,
+      `    await this.${prop}.fill(${param});`,
+      "  }",
+    ].join("\n");
+  }
+
   const clickMatch = method.match(/^click(.+)$/);
   if (clickMatch || action === "interact") {
     const buttonLoc =
-      locs.find((l) => l.element.includes("button")) ?? locs[0]!;
+      locs.find((l) => /button/i.test(l.element)) ?? locs[0];
+    if (!buttonLoc) return null;
     const prop = toPropName(buttonLoc.element);
-    const methodName = clickMatch ? method : `click${capitalize(componentName)}Action`;
     return [
-      `  async ${methodName}(): Promise<void> {`,
+      `  async ${method}(): Promise<void> {`,
       `    await this.${prop}.click();`,
       "  }",
     ].join("\n");
@@ -623,6 +672,22 @@ function removeConflictingPropertyGetters(content: string): string {
   return updated;
 }
 
+/** Keep first declaration when duplicate readonly Locator fields exist. */
+export function dedupeLocatorFieldDeclarations(content: string): string {
+  const seen = new Set<string>();
+  return content
+    .split("\n")
+    .filter((line) => {
+      const match = line.match(/^\s*readonly\s+(\w+)\s*:\s*Locator/);
+      if (!match) return true;
+      const name = match[1]!;
+      if (seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    })
+    .join("\n");
+}
+
 export function dedupeAsyncMethods(content: string): string {
   const lines = content.split("\n");
   const result: string[] = [];
@@ -670,6 +735,7 @@ export function repairPomContent(
     updated = ensureExpectImport(updated);
   }
   updated = normalizePageReferences(updated);
+  updated = dedupeLocatorFieldDeclarations(updated);
   updated = dedupeAsyncMethods(updated);
   return updated;
 }
@@ -758,7 +824,10 @@ export async function enrichPomsForJourneys(
       if (existing.has(method)) continue;
       let body = methodBodyForStep(method, action, catalog.locators, component);
       if (!body && method.startsWith("assert")) {
-        body = genericAssertMethod(method);
+        body = genericAssertMethod(
+          method,
+          catalog.locators.filter((l) => l.component === component),
+        );
       }
       if (body) {
         additions.push(body);

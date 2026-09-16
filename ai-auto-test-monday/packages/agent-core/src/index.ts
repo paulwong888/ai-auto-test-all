@@ -21,3 +21,5 @@ export * from "./lib/journeys-to-features.js";
 export * from "./lib/playwright-direct.js";
 export * from "./lib/pom-utils.js";
 export * from "./lib/pipeline-batch.js";
+export * from "./lib/e2e-auth.js";
+export * from "./lib/merge-execution-report.js";

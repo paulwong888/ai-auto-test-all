@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 
@@ -8,9 +8,11 @@ export interface DirectRunOptions {
   repoPath: string;
   targetUrl: string;
   specFile: string;
+  e2eEnv?: Record<string, string>;
   playwrightCliPath?: string;
   nodePath?: string;
   timeoutMs?: number;
+  abortSignal?: AbortSignal;
 }
 
 export interface DirectRunResult {
@@ -69,13 +71,25 @@ export function buildPlaywrightCommand(opts: DirectRunOptions): string {
   const resolvedCli = opts.playwrightCliPath?.trim() || cliPath;
   const resolvedNode = opts.nodePath?.trim() || nodePath;
 
-  return [
+  const parts = [
     `cd ${shellQuote(opts.repoPath)}`,
     `{ [ -f .env.e2e ] && set -a && . ./.env.e2e && set +a; true; }`,
-    `NODE_PATH=${shellQuote(resolvedNode)}`,
-    `PLAYWRIGHT_BASE_URL=${shellQuote(opts.targetUrl)}`,
-    `node ${shellQuote(resolvedCli)} test --config playwright.config.ts ${opts.specFile}`,
-  ].join(" && ");
+  ];
+
+  if (opts.e2eEnv) {
+    for (const [key, value] of Object.entries(opts.e2eEnv)) {
+      parts.push(`export ${key}=${shellQuote(value)}`);
+    }
+  }
+
+  // Env vars must prefix `node` (not `VAR=... && node`): unexported assignments
+  // are not inherited by child processes, breaking @playwright/test resolution
+  // when playwright.config.ts loads from a repo with a broken node_modules symlink.
+  parts.push(
+    `NODE_PATH=${shellQuote(resolvedNode)} PLAYWRIGHT_BASE_URL=${shellQuote(opts.targetUrl)} node ${shellQuote(resolvedCli)} test --config playwright.config.ts ${opts.specFile}`,
+  );
+
+  return parts.join(" && ");
 }
 
 
@@ -103,24 +117,52 @@ export async function runPlaywrightSpec(
 ): Promise<DirectRunResult> {
   const start = Date.now();
   const cmd = buildPlaywrightCommand(opts);
-  try {
-    const { stdout, stderr } = await execFileAsync("bash", ["-lc", cmd], {
-      timeout: opts.timeoutMs ?? 600_000,
-      maxBuffer: 10 * 1024 * 1024,
+  const timeoutMs = opts.timeoutMs ?? 600_000;
+
+  return new Promise((resolve) => {
+    const child = spawn("bash", ["-lc", cmd], {
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    return {
-      success: true,
-      stdout,
-      stderr,
-      durationMs: Date.now() - start,
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk: Buffer | string) => {
+      stdout += String(chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer | string) => {
+      stderr += String(chunk);
+    });
+
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+    }, timeoutMs);
+
+    const onAbort = () => {
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 2_000);
     };
-  } catch (err: unknown) {
-    const e = err as { stdout?: string; stderr?: string; message?: string };
-    return {
-      success: false,
-      stdout: e.stdout ?? "",
-      stderr: e.stderr ?? e.message ?? String(err),
-      durationMs: Date.now() - start,
-    };
-  }
+    opts.abortSignal?.addEventListener("abort", onAbort, { once: true });
+
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      opts.abortSignal?.removeEventListener("abort", onAbort);
+      const cancelled = opts.abortSignal?.aborted;
+      resolve({
+        success: !cancelled && code === 0,
+        stdout,
+        stderr: cancelled ? stderr || "Activity cancelled" : stderr,
+        durationMs: Date.now() - start,
+      });
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timeout);
+      opts.abortSignal?.removeEventListener("abort", onAbort);
+      resolve({
+        success: false,
+        stdout,
+        stderr: err.message,
+        durationMs: Date.now() - start,
+      });
+    });
+  });
 }

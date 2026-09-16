@@ -14,6 +14,24 @@ const gitUrlSchema = z
   .optional()
   .or(z.literal(""));
 
+export const e2eAuthSchema = z.object({
+  username: z.string().min(1),
+  password: z.string().min(1),
+  caseUsername: z.string().optional(),
+  casePassword: z.string().optional(),
+  corpUsername: z.string().optional(),
+  corpPassword: z.string().optional(),
+});
+
+export const e2eAuthUpdateSchema = z.object({
+  username: z.string().min(1).optional(),
+  password: z.string().optional(),
+  caseUsername: z.string().optional(),
+  casePassword: z.string().optional(),
+  corpUsername: z.string().optional(),
+  corpPassword: z.string().optional(),
+});
+
 export const createProjectSchema = z.object({
   id: z.string().min(1).optional(),
   name: z.string().min(1),
@@ -23,9 +41,15 @@ export const createProjectSchema = z.object({
   backendBranch: z.string().default("main"),
   localPathOverride: z.string().optional(),
   targetUrl: z.string().url().optional().or(z.literal("")),
+  e2eAuth: e2eAuthSchema,
 });
 
-export const updateProjectSchema = createProjectSchema.partial();
+export const updateProjectSchema = createProjectSchema
+  .omit({ e2eAuth: true })
+  .partial()
+  .extend({
+    e2eAuth: e2eAuthUpdateSchema.optional(),
+  });
 
 export const runPipelineSchema = z.object({
   projectId: z.string().min(1),

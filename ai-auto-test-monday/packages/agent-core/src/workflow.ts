@@ -43,6 +43,15 @@ export type PipelineStatus =
 
 export type ExecutionMode = "auto" | "platform" | "direct";
 
+export interface PipelineE2eAuth {
+  username: string;
+  password: string;
+  caseUsername?: string;
+  casePassword?: string;
+  corpUsername?: string;
+  corpPassword?: string;
+}
+
 export interface PipelineInput {
   projectId: string;
   runId: string;
@@ -50,6 +59,7 @@ export interface PipelineInput {
   frontendPath: string;
   backendPath?: string;
   targetUrl?: string;
+  e2eAuth?: PipelineE2eAuth;
   applyTestIds?: boolean;
   executeAfterGenerate?: boolean;
   executionMode?: ExecutionMode;

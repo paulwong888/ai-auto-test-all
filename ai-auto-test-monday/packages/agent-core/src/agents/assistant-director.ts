@@ -11,6 +11,10 @@ import {
   parsePomMethods,
   sanitizeSpecFileName,
 } from "../lib/pom-utils.js";
+import {
+  findSpecPomMethodMismatches,
+  journeyNeedsUnauthenticatedContext,
+} from "../lib/spec-pom-preflight.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -78,6 +82,13 @@ function buildDeterministicSpec(
 
   for (const pom of poms) {
     lines.push(`  let ${varNames.get(pom)}: ${pom};`);
+  }
+
+  if (journeyNeedsUnauthenticatedContext(journey)) {
+    lines.push("");
+    lines.push("  test.use({");
+    lines.push("    storageState: { cookies: [], origins: [] },");
+    lines.push("  });");
   }
 
   lines.push("");
@@ -157,7 +168,8 @@ async function tryLlmSpec(
 
   const llm = new HigressClient(loadLlmConfigFromEnv());
   const result = await llm.chatJson(
-    `Generate a Playwright test spec for one user journey. Use ONLY POM methods — no page.locator(), no CSS, no XPath, no waitForTimeout.
+    `Generate a Playwright test spec for one user journey. Use ONLY async methods that already exist in the provided pomSnippets — do NOT invent or rename methods.
+No page.locator(), no CSS, no XPath, no waitForTimeout. Method names must match journey.steps[].method exactly.
 Import POMs from '../poms/{ClassName}'. Use test.describe + test.beforeEach + single test().
 Return JSON { files: [{ fileName, content }] } with one file.`,
     JSON.stringify({ journey, targetUrl, pomSnippets }),
@@ -206,6 +218,37 @@ function journeyMethodsSatisfied(
   return findMissingJourneyMethods(journey, pomMethods).length === 0;
 }
 
+const MAX_POM_ENRICH_ATTEMPTS = 3;
+
+async function ensureJourneyPomMethods(
+  journey: Journey,
+  pomsDir: string,
+  catalog: LocatorCatalog,
+  allPoms: string[],
+  pomMethods: Map<string, Set<string>>,
+): Promise<Map<string, Set<string>>> {
+  let methods = pomMethods;
+  for (let attempt = 0; attempt < MAX_POM_ENRICH_ATTEMPTS; attempt += 1) {
+    if (journeyMethodsSatisfied(journey, methods)) return methods;
+    await enrichPomsForJourneys([journey], pomsDir, catalog);
+    methods = await loadPomMethods(pomsDir, allPoms);
+  }
+  return methods;
+}
+
+function resolveSpecContent(
+  journey: Journey,
+  targetUrl: string,
+  methods: Map<string, Set<string>>,
+  llmContent: string | null,
+): string {
+  if (llmContent && !violatesSpecDiscipline(llmContent)) {
+    const mismatches = findSpecPomMethodMismatches(llmContent, methods);
+    if (mismatches.length === 0) return llmContent;
+  }
+  return buildDeterministicSpec(journey, targetUrl, methods);
+}
+
 export async function runAssistantDirector(
   input: AssistantDirectorInput,
 ): Promise<SpecFile[]> {
@@ -217,27 +260,36 @@ export async function runAssistantDirector(
   await enrichPomsForJourneys(journeys, input.pomsDir, input.catalog);
 
   const allPoms = [...new Set(journeys.flatMap((j) => uniquePoms(j)))];
-  const pomMethods = await loadPomMethods(input.pomsDir, allPoms);
+  let pomMethods = await loadPomMethods(input.pomsDir, allPoms);
 
   const specs: SpecFile[] = [];
+  const preflightFailures: string[] = [];
 
   for (const journey of journeys) {
-    let methods = pomMethods;
-    if (!journeyMethodsSatisfied(journey, methods)) {
+    const methods = await ensureJourneyPomMethods(
+      journey,
+      input.pomsDir,
+      input.catalog,
+      allPoms,
+      pomMethods,
+    );
+    pomMethods = methods;
+
+    const llmContent = await tryLlmSpec(journey, targetUrl, input.pomsDir);
+    let content = resolveSpecContent(journey, targetUrl, methods, llmContent);
+
+    let mismatches = findSpecPomMethodMismatches(content, methods);
+    if (mismatches.length > 0) {
       await enrichPomsForJourneys([journey], input.pomsDir, input.catalog);
-      methods = await loadPomMethods(input.pomsDir, allPoms);
+      pomMethods = await loadPomMethods(input.pomsDir, allPoms);
+      content = buildDeterministicSpec(journey, targetUrl, pomMethods);
+      mismatches = findSpecPomMethodMismatches(content, pomMethods);
     }
 
-    let content =
-      (await tryLlmSpec(journey, targetUrl, input.pomsDir)) ??
-      buildDeterministicSpec(journey, targetUrl, methods);
-
-    if (violatesSpecDiscipline(content)) {
-      content = buildDeterministicSpec(journey, targetUrl, methods);
-    }
-
-    if (!journeyMethodsSatisfied(journey, methods)) {
-      content = buildDeterministicSpec(journey, targetUrl, methods);
+    if (mismatches.length > 0) {
+      preflightFailures.push(
+        `${journey.id}: ${mismatches.slice(0, 5).join(", ")}`,
+      );
     }
 
     specs.push({
@@ -245,6 +297,12 @@ export async function runAssistantDirector(
       content,
       journeyId: journey.id,
     });
+  }
+
+  if (preflightFailures.length > 0) {
+    throw new Error(
+      `Spec/POM preflight failed for ${preflightFailures.length} journey(s): ${preflightFailures.join("; ")}`,
+    );
   }
 
   return specs;

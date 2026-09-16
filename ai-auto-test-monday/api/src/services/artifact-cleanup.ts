@@ -31,6 +31,10 @@ const DOWNSTREAM_DIRS: Partial<Record<AgentId, string[]>> = {
   assistantDirector: ["tests"],
 };
 
+export function downstreamDeletesExecutionReport(fromAgent: AgentId): boolean {
+  return (DOWNSTREAM_FILES[fromAgent] ?? []).includes("execution-report.json");
+}
+
 export async function cleanupDownstreamArtifacts(
   artifactRoot: string,
   fromAgent: AgentId,

@@ -1,5 +1,23 @@
 export type CloneStatus = "idle" | "cloning" | "ready" | "failed";
 
+export interface E2eAuthConfig {
+  username: string;
+  password: string;
+  caseUsername?: string;
+  casePassword?: string;
+  corpUsername?: string;
+  corpPassword?: string;
+}
+
+export interface PublicE2eAuth {
+  username: string;
+  caseUsername?: string;
+  corpUsername?: string;
+  hasPassword: boolean;
+  hasCasePassword?: boolean;
+  hasCorpPassword?: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -9,6 +27,7 @@ export interface Project {
   backendBranch: string;
   localPathOverride: string | null;
   targetUrl: string | null;
+  e2eAuth: E2eAuthConfig | null;
   cloneStatus: CloneStatus;
   cloneError: string | null;
   frontendRepoPath: string | null;
@@ -17,6 +36,10 @@ export interface Project {
   createdAt: string;
   updatedAt: string;
 }
+
+export type PublicProject = Omit<Project, "e2eAuth"> & {
+  e2eAuth: PublicE2eAuth | null;
+};
 
 export interface PipelineRun {
   id: string;

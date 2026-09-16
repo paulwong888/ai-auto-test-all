@@ -6,6 +6,7 @@ import path from "node:path";
 import type { Journey, LocatorCatalog } from "../artifacts/types.js";
 import {
   dedupeAsyncMethods,
+  dedupeLocatorFieldDeclarations,
   enrichPomsForJourneys,
   ensureConstructorPageRef,
   repairPomContent,
@@ -247,5 +248,125 @@ export class LoginPagePage {
     const fixed = repairPomContent(broken, "LoginPage", loginCatalog);
     assert.match(fixed, /this\.usernameInput = this\.page\.getByRole\('textbox'/);
     assert.match(fixed, /await this\.text_input\.fill\(username\)/);
+  });
+});
+
+describe("dedupeLocatorFieldDeclarations", () => {
+  it("removes duplicate readonly Locator fields", () => {
+    const input = `export class X {
+  readonly button: Locator;
+  readonly link: Locator;
+  readonly button: Locator;
+}`;
+    const out = dedupeLocatorFieldDeclarations(input);
+    assert.equal((out.match(/readonly button: Locator/g) ?? []).length, 1);
+    assert.match(out, /readonly link: Locator/);
+  });
+});
+
+describe("enrichPomsForJourneys journey method names", () => {
+  let pomsDir: string;
+
+  beforeEach(async () => {
+    pomsDir = await mkdtemp(path.join(os.tmpdir(), "pom-method-"));
+  });
+
+  afterEach(async () => {
+    await rm(pomsDir, { recursive: true, force: true });
+  });
+
+  it("uses exact journey step method name for interact actions", async () => {
+    const catalog: LocatorCatalog = {
+      generatedAt: "2026-09-16T00:00:00.000Z",
+      locators: [
+        {
+          component: "HoldSuspension",
+          element: "button",
+          testId: "HoldSuspension-button",
+          priority: ["page.getByTestId('HoldSuspension-button')"],
+        },
+      ],
+    };
+    const journeys: Journey[] = [
+      {
+        id: "hold",
+        name: "Hold",
+        description: "hold",
+        priority: "P1",
+        category: "Happy Path",
+        gherkinText: "Scenario: hold",
+        steps: [
+          {
+            step: 1,
+            pom: "HoldSuspensionPage",
+            method: "selectSuspensionReason",
+            action: "interact",
+            description: "select reason",
+          },
+        ],
+      },
+    ];
+    await enrichPomsForJourneys(journeys, pomsDir, catalog);
+    const content = await readFile(
+      path.join(pomsDir, "HoldSuspensionPage.ts"),
+      "utf8",
+    );
+    assert.match(content, /async selectSuspensionReason\(/);
+    assert.doesNotMatch(content, /selectHoldSuspensionOption/);
+  });
+
+  it("adds enterUsername/enterPassword fallbacks when catalog lacks inputs", async () => {
+    const catalog: LocatorCatalog = {
+      generatedAt: "2026-09-16T00:00:00.000Z",
+      locators: [
+        {
+          component: "WaivingForm",
+          element: "form",
+          testId: "WaivingForm-form",
+          priority: ["page.getByTestId('WaivingForm-form')"],
+        },
+        {
+          component: "WaivingForm",
+          element: "button",
+          testId: "WaivingForm-button",
+          priority: ["page.getByTestId('WaivingForm-button')"],
+        },
+      ],
+    };
+    const journeys: Journey[] = [
+      {
+        id: "complete-waiving-request",
+        name: "Complete waiving",
+        description: "waiving",
+        priority: "P1",
+        category: "Happy Path",
+        gherkinText: "Scenario: waiving",
+        steps: [
+          {
+            step: 1,
+            pom: "WaivingFormPage",
+            method: "enterUsername",
+            action: "interact",
+            description: "enter username",
+          },
+          {
+            step: 2,
+            pom: "WaivingFormPage",
+            method: "enterPassword",
+            action: "interact",
+            description: "enter password",
+          },
+        ],
+      },
+    ];
+    await enrichPomsForJourneys(journeys, pomsDir, catalog);
+    const content = await readFile(
+      path.join(pomsDir, "WaivingFormPage.ts"),
+      "utf8",
+    );
+    assert.match(content, /async enterUsername\(/);
+    assert.match(content, /getByRole\('textbox'\)/);
+    assert.match(content, /async enterPassword\(/);
+    assert.match(content, /input\[type="password"\]/);
   });
 });

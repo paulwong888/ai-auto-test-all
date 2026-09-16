@@ -16,7 +16,9 @@ import {
   buildExecutionReport,
   mergeExecutionReport,
 } from "../lib/merge-execution-report.js";
+import { e2eAuthToEnv } from "../lib/e2e-auth.js";
 import { ensurePlaywrightBrowsers, runPlaywrightSpec } from "../lib/playwright-direct.js";
+import type { E2eAuthConfig } from "../types.js";
 import type { ExecutionMode } from "../workflow.js";
 
 export interface ContinuityLeadInput {
@@ -25,10 +27,21 @@ export interface ContinuityLeadInput {
   artifactRoot: string;
   frontendPath: string;
   targetUrl?: string;
+  e2eAuth?: E2eAuthConfig;
   executionMode?: ExecutionMode;
   platformBaseUrl?: string;
   projectName?: string;
   journeyIds?: string[];
+  /** When true, stop between journey runs (Temporal activity cancellation). */
+  shouldCancel?: () => boolean;
+  /** Aborts the in-flight Playwright subprocess when cancelled. */
+  abortSignal?: AbortSignal;
+}
+
+function throwIfCancelled(shouldCancel?: () => boolean): void {
+  if (shouldCancel?.()) {
+    throw new Error("Activity cancelled");
+  }
 }
 
 function filterSpecFilesByJourneyIds(
@@ -95,6 +108,9 @@ async function runDirectForJourneys(
   targetUrl: string,
   specFiles: string[],
   journeyById: Map<string, Journey>,
+  e2eEnv?: Record<string, string>,
+  shouldCancel?: () => boolean,
+  abortSignal?: AbortSignal,
 ): Promise<ExecutionResult[]> {
   console.info(
     `[continuityLead] direct execution repo=${repoPath} target=${targetUrl} specs=${specFiles.length}`,
@@ -102,6 +118,7 @@ async function runDirectForJourneys(
   await ensurePlaywrightBrowsers(repoPath);
   const results: ExecutionResult[] = [];
   for (const specPath of specFiles) {
+    throwIfCancelled(shouldCancel);
     const rel = path.relative(repoPath, specPath).replace(/\\/g, "/");
     const journeyId = path.basename(specPath, ".spec.ts");
     let attempts = 0;
@@ -112,6 +129,7 @@ async function runDirectForJourneys(
     console.info(`[continuityLead] direct journey=${journeyId} spec=${rel}`);
 
     while (attempts < 3 && !passed) {
+      throwIfCancelled(shouldCancel);
       attempts += 1;
       console.info(
         `[continuityLead] direct journey=${journeyId} attempt=${attempts}/3`,
@@ -120,7 +138,12 @@ async function runDirectForJourneys(
         repoPath,
         targetUrl,
         specFile: rel,
+        e2eEnv,
+        abortSignal,
       });
+      if (shouldCancel?.()) {
+        throw new Error("Activity cancelled");
+      }
       durationMs = run.durationMs;
       if (run.success) {
         passed = true;
@@ -164,8 +187,10 @@ async function runDirectForJourneys(
 export async function runContinuityLead(
   input: ContinuityLeadInput,
 ): Promise<ExecutionReport> {
+  throwIfCancelled(input.shouldCancel);
   const targetUrl = input.targetUrl ?? "http://localhost:3000";
   const mode = input.executionMode ?? "auto";
+  const e2eEnv = input.e2eAuth ? e2eAuthToEnv(input.e2eAuth) : undefined;
   const platformUrl =
     input.platformBaseUrl ?? process.env.PLATFORM_BASE_URL ?? "http://host.docker.internal:3001";
 
@@ -224,6 +249,7 @@ export async function runContinuityLead(
       await platform.importFeatures(project.id, features);
 
       for (const journey of journeysToRun) {
+        throwIfCancelled(input.shouldCancel);
         let attempts = 0;
         let passed = false;
         let lastMessage = "";
@@ -231,6 +257,7 @@ export async function runContinuityLead(
         console.info(`[continuityLead] platform journey=${journey.id}`);
 
         while (attempts < 3 && !passed) {
+          throwIfCancelled(input.shouldCancel);
           attempts += 1;
           console.info(
             `[continuityLead] platform journey=${journey.id} attempt=${attempts}/3`,
@@ -276,6 +303,9 @@ export async function runContinuityLead(
         targetUrl,
         specFiles,
         journeyById,
+        e2eEnv,
+        input.shouldCancel,
+        input.abortSignal,
       );
     }
   } else {
@@ -294,6 +324,9 @@ export async function runContinuityLead(
         targetUrl,
         specFiles,
         journeyById,
+        e2eEnv,
+        input.shouldCancel,
+        input.abortSignal,
       );
     }
   }

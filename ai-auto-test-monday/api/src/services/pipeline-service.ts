@@ -22,8 +22,12 @@ import type { AgentId, PipelineProgress } from "@monday/agent-core/workflow";
 import { config } from "../config.js";
 import { pool } from "../db/pool.js";
 import { getProject } from "./project-service.js";
+import type { E2eAuthConfig, Project } from "@monday/agent-core";
 import { mergeExecuteProgress } from "./pipeline-progress.js";
-import { cleanupDownstreamArtifacts } from "./artifact-cleanup.js";
+import {
+  cleanupDownstreamArtifacts,
+  downstreamDeletesExecutionReport,
+} from "./artifact-cleanup.js";
 
 let client: Client | null = null;
 
@@ -82,6 +86,24 @@ async function hasGenerationArtifacts(artifactRoot: string): Promise<boolean> {
     }
   }
   return true;
+}
+
+function requireE2eAuth(
+  project: Project,
+  executionMode: "auto" | "platform" | "direct",
+): void {
+  if (executionMode === "platform") return;
+  if (!project.e2eAuth?.username || !project.e2eAuth.password) {
+    throw new Error(
+      "Project E2E credentials not configured; set username and password in project settings",
+    );
+  }
+}
+
+function pipelineE2eAuth(
+  project: Project,
+): E2eAuthConfig | undefined {
+  return project.e2eAuth ?? undefined;
 }
 
 async function listSpecFiles(artifactRoot: string): Promise<string[]> {
@@ -165,6 +187,10 @@ export async function startPipeline(
   const executeAfterGenerate = options.executeAfterGenerate ?? true;
   const applyTestIds = options.applyTestIds ?? false;
 
+  if (executeAfterGenerate) {
+    requireE2eAuth(project, executionMode);
+  }
+
   await pool.query(
     `INSERT INTO pipeline_runs (id, project_id, temporal_workflow_id, status, artifact_root, execution_mode, execution_status, execute_after_generate, apply_test_ids)
      VALUES ($1, $2, $3, 'running', $4, $5, $6, $7, $8)`,
@@ -192,6 +218,7 @@ export async function startPipeline(
         frontendPath,
         backendPath,
         targetUrl: project.targetUrl ?? undefined,
+        e2eAuth: pipelineE2eAuth(project),
         applyTestIds,
         executeAfterGenerate,
         executionMode,
@@ -458,6 +485,8 @@ export async function executePipelineRun(
     (run.execution_mode as "auto" | "platform" | "direct" | null) ??
     "auto";
 
+  requireE2eAuth(project, executionMode);
+
   const workflowId =
     options.journeyIds?.length
       ? `execute-${runId}-partial-${hashJourneyIds(options.journeyIds)}`
@@ -482,6 +511,7 @@ export async function executePipelineRun(
           artifactRoot,
           frontendPath,
           targetUrl: project.targetUrl ?? undefined,
+          e2eAuth: pipelineE2eAuth(project),
           executeAfterGenerate: true,
           executionMode,
           journeyIds: options.journeyIds,
@@ -497,6 +527,21 @@ export async function executePipelineRun(
   }
 
   return { workflowId };
+}
+
+function resolveResumeExecutionStatus(
+  fromAgent: AgentId,
+  run: Record<string, unknown>,
+  executeAfterGenerate: boolean,
+  isGenerationResume: boolean,
+): string | null {
+  if (fromAgent === "continuityLead") {
+    return "running";
+  }
+  if (isGenerationResume && downstreamDeletesExecutionReport(fromAgent)) {
+    return executeAfterGenerate ? "pending" : null;
+  }
+  return (run.execution_status as string | null) ?? null;
 }
 
 export async function resumePipelineRun(
@@ -555,6 +600,20 @@ export async function resumePipelineRun(
   const workflowId = `resume-${runId}-${options.fromAgent}`;
   const isGenerationResume = options.fromAgent !== "continuityLead";
 
+  if (
+    options.fromAgent === "continuityLead" ||
+    (executeAfterGenerate && isGenerationResume)
+  ) {
+    requireE2eAuth(project, executionMode);
+  }
+
+  const resumeExecutionStatus = resolveResumeExecutionStatus(
+    options.fromAgent,
+    run,
+    executeAfterGenerate,
+    isGenerationResume,
+  );
+
   await pool.query(
     `UPDATE pipeline_runs SET
       status = 'running',
@@ -570,11 +629,7 @@ export async function resumePipelineRun(
     [
       runId,
       options.fromAgent,
-      isGenerationResume && executeAfterGenerate
-        ? "pending"
-        : options.fromAgent === "continuityLead"
-          ? "running"
-          : run.execution_status ?? null,
+      resumeExecutionStatus,
       executionMode,
       workflowId,
       executeAfterGenerate,
@@ -596,6 +651,7 @@ export async function resumePipelineRun(
           artifactRoot,
           frontendPath,
           targetUrl: project.targetUrl ?? undefined,
+          e2eAuth: pipelineE2eAuth(project),
           applyTestIds,
           executeAfterGenerate,
           executionMode,
@@ -614,6 +670,28 @@ export async function resumePipelineRun(
   return { workflowId };
 }
 
+async function cancelWorkflowId(
+  temporal: Client,
+  workflowId: string,
+): Promise<void> {
+  try {
+    await temporal.workflow.getHandle(workflowId).cancel();
+  } catch {
+    // workflow may already be finished or not exist
+  }
+}
+
+function workflowIdsForRun(runId: string, run: Record<string, unknown>): string[] {
+  const ids = new Set<string>();
+  if (run.temporal_workflow_id) ids.add(String(run.temporal_workflow_id));
+  if (run.overlay_workflow_id) ids.add(String(run.overlay_workflow_id));
+  ids.add(`execute-${runId}`);
+  for (const agent of AGENT_IDS) {
+    ids.add(`resume-${runId}-${agent}`);
+  }
+  return [...ids];
+}
+
 export async function cancelPipeline(runId: string): Promise<void> {
   const { rows } = await pool.query(
     "SELECT * FROM pipeline_runs WHERE id = $1",
@@ -623,16 +701,23 @@ export async function cancelPipeline(runId: string): Promise<void> {
   if (!run) {
     throw new Error(`Run not found: ${runId}`);
   }
-  if (run.status === "completed" || run.status === "cancelled") {
+  if (run.status === "completed") {
     throw new Error(`Run already finished: ${run.status}`);
   }
 
   const temporal = await getTemporalClient();
-  const handle = temporal.workflow.getHandle(String(run.temporal_workflow_id));
-  await handle.cancel();
+  for (const workflowId of workflowIdsForRun(runId, run)) {
+    await cancelWorkflowId(temporal, workflowId);
+  }
 
   await pool.query(
-    `UPDATE pipeline_runs SET status = 'cancelled', current_agent = NULL, finished_at = NOW() WHERE id = $1`,
+    `UPDATE pipeline_runs SET
+      status = 'cancelled',
+      current_agent = NULL,
+      execution_status = NULL,
+      overlay_workflow_id = NULL,
+      finished_at = NOW()
+    WHERE id = $1`,
     [runId],
   );
 }

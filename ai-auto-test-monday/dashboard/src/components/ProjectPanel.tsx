@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 
+export interface PublicE2eAuthRecord {
+  username: string;
+  caseUsername?: string;
+  corpUsername?: string;
+  hasPassword: boolean;
+  hasCasePassword?: boolean;
+  hasCorpPassword?: boolean;
+}
+
 export interface ProjectRecord {
   id: string;
   name: string;
@@ -9,6 +18,7 @@ export interface ProjectRecord {
   backendBranch: string;
   localPathOverride: string | null;
   targetUrl: string | null;
+  e2eAuth: PublicE2eAuthRecord | null;
   cloneStatus: string;
   cloneError: string | null;
   frontendRepoPath: string | null;
@@ -25,6 +35,12 @@ interface ProjectForm {
   backendBranch: string;
   localPathOverride: string;
   targetUrl: string;
+  e2eUsername: string;
+  e2ePassword: string;
+  e2eCaseUsername: string;
+  e2eCasePassword: string;
+  e2eCorpUsername: string;
+  e2eCorpPassword: string;
 }
 
 function isMountOnlyProject(p: ProjectRecord): boolean {
@@ -42,6 +58,12 @@ const emptyForm = (): ProjectForm => ({
   backendBranch: "main",
   localPathOverride: "",
   targetUrl: "",
+  e2eUsername: "",
+  e2ePassword: "",
+  e2eCaseUsername: "",
+  e2eCasePassword: "",
+  e2eCorpUsername: "",
+  e2eCorpPassword: "",
 });
 
 interface Props {
@@ -105,6 +127,12 @@ export function ProjectPanel({
       backendBranch: p.backendBranch,
       localPathOverride: p.localPathOverride ?? "",
       targetUrl: p.targetUrl ?? "",
+      e2eUsername: p.e2eAuth?.username ?? "",
+      e2ePassword: "",
+      e2eCaseUsername: p.e2eAuth?.caseUsername ?? "",
+      e2eCasePassword: "",
+      e2eCorpUsername: p.e2eAuth?.corpUsername ?? "",
+      e2eCorpPassword: "",
     });
     setMessage(null);
     setError(null);
@@ -115,10 +143,54 @@ export function ProjectPanel({
     setForm(emptyForm());
   }
 
+  function buildE2eAuthPayload(): Record<string, string> {
+    const auth: Record<string, string> = {
+      username: form.e2eUsername.trim(),
+    };
+
+    if (form.e2ePassword) {
+      auth.password = form.e2ePassword;
+    } else if (!editingId) {
+      auth.password = form.e2ePassword;
+    }
+
+    if (form.e2eCaseUsername.trim()) {
+      auth.caseUsername = form.e2eCaseUsername.trim();
+    }
+    if (form.e2eCasePassword) {
+      auth.casePassword = form.e2eCasePassword;
+    }
+    if (form.e2eCorpUsername.trim()) {
+      auth.corpUsername = form.e2eCorpUsername.trim();
+    }
+    if (form.e2eCorpPassword) {
+      auth.corpPassword = form.e2eCorpPassword;
+    }
+
+    return auth;
+  }
+
   async function saveProject() {
     setError(null);
     setMessage(null);
-    const body = {
+
+    if (!form.name.trim()) {
+      setError("请填写项目名称");
+      return;
+    }
+
+    if (!editingId) {
+      if (!form.e2eUsername.trim() || !form.e2ePassword) {
+        setError("新建项目必须填写 E2E 用户名和密码");
+        return;
+      }
+    } else if (!form.e2eUsername.trim()) {
+      setError("E2E 用户名不能为空");
+      return;
+    }
+
+    const e2eAuth = buildE2eAuthPayload();
+    const body: Record<string, unknown> = {
       name: form.name,
       frontendGitUrl: form.frontendGitUrl,
       frontendBranch: form.frontendBranch,
@@ -128,6 +200,8 @@ export function ProjectPanel({
       targetUrl: form.targetUrl || undefined,
       ...(editingId ? {} : form.id ? { id: form.id } : {}),
     };
+
+    body.e2eAuth = e2eAuth;
 
     const url = editingId ? `/api/projects/${editingId}` : "/api/projects";
     const method = editingId ? "PUT" : "POST";
@@ -228,6 +302,11 @@ export function ProjectPanel({
       {selected && (
         <p className="hint">
           当前选中：<strong>{selected.name}</strong>
+          {selected.e2eAuth?.hasPassword ? (
+            <> — E2E 凭证已配置（{selected.e2eAuth.username}）</>
+          ) : (
+            <> — 未配置 E2E 登录凭证</>
+          )}
           {selected.cloneStatus !== "ready" && (
             <>
               {" "}
@@ -315,6 +394,82 @@ export function ProjectPanel({
               onChange={(e) => setForm({ ...form, targetUrl: e.target.value })}
             />
           </label>
+
+          <fieldset className="e2e-auth-fieldset">
+            <legend>E2E 登录凭证</legend>
+            <label>
+              E2E 用户名
+              <input
+                value={form.e2eUsername}
+                onChange={(e) =>
+                  setForm({ ...form, e2eUsername: e.target.value })
+                }
+                required
+                autoComplete="off"
+              />
+            </label>
+            <label>
+              E2E 密码
+              <input
+                type="password"
+                value={form.e2ePassword}
+                onChange={(e) =>
+                  setForm({ ...form, e2ePassword: e.target.value })
+                }
+                placeholder={editingId ? "留空则不修改" : undefined}
+                required={!editingId}
+                autoComplete="new-password"
+              />
+            </label>
+            <details className="e2e-auth-optional">
+              <summary>Case / Corp 角色（可选）</summary>
+              <label>
+                Case 用户名
+                <input
+                  value={form.e2eCaseUsername}
+                  onChange={(e) =>
+                    setForm({ ...form, e2eCaseUsername: e.target.value })
+                  }
+                  autoComplete="off"
+                />
+              </label>
+              <label>
+                Case 密码
+                <input
+                  type="password"
+                  value={form.e2eCasePassword}
+                  onChange={(e) =>
+                    setForm({ ...form, e2eCasePassword: e.target.value })
+                  }
+                  placeholder={editingId ? "留空则不修改" : undefined}
+                  autoComplete="new-password"
+                />
+              </label>
+              <label>
+                Corp 用户名
+                <input
+                  value={form.e2eCorpUsername}
+                  onChange={(e) =>
+                    setForm({ ...form, e2eCorpUsername: e.target.value })
+                  }
+                  autoComplete="off"
+                />
+              </label>
+              <label>
+                Corp 密码
+                <input
+                  type="password"
+                  value={form.e2eCorpPassword}
+                  onChange={(e) =>
+                    setForm({ ...form, e2eCorpPassword: e.target.value })
+                  }
+                  placeholder={editingId ? "留空则不修改" : undefined}
+                  autoComplete="new-password"
+                />
+              </label>
+            </details>
+          </fieldset>
+
           <div className="form-actions">
             <button type="button" onClick={() => void saveProject()}>
               {editingId ? "保存" : "创建"}

@@ -1,9 +1,21 @@
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { pool } from "../db/pool.js";
-import type { CloneStatus, Project } from "@monday/agent-core";
-import { parseCloneStatus } from "@monday/agent-core";
+import type {
+  CloneStatus,
+  Project,
+  PublicProject,
+} from "@monday/agent-core";
+import {
+  mergeE2eAuthUpdate,
+  parseCloneStatus,
+  parseE2eAuthFromRow,
+} from "@monday/agent-core";
 import type { CreateProjectInput, UpdateProjectInput } from "@monday/agent-core";
+
+type CreateProjectServiceInput = Omit<CreateProjectInput, "e2eAuth"> & {
+  e2eAuth?: CreateProjectInput["e2eAuth"];
+};
 
 function rowToProject(row: Record<string, unknown>): Project {
   return {
@@ -17,6 +29,7 @@ function rowToProject(row: Record<string, unknown>): Project {
       ? String(row.local_path_override)
       : null,
     targetUrl: row.target_url ? String(row.target_url) : null,
+    e2eAuth: parseE2eAuthFromRow(row.e2e_auth_json),
     cloneStatus: parseCloneStatus(row.clone_status),
     cloneError: row.clone_error ? String(row.clone_error) : null,
     frontendRepoPath: row.frontend_repo_path
@@ -30,6 +43,23 @@ function rowToProject(row: Record<string, unknown>): Project {
       : null,
     createdAt: new Date(String(row.created_at)).toISOString(),
     updatedAt: new Date(String(row.updated_at)).toISOString(),
+  };
+}
+
+export function toPublicProject(project: Project): PublicProject {
+  const { e2eAuth, ...rest } = project;
+  return {
+    ...rest,
+    e2eAuth: e2eAuth
+      ? {
+          username: e2eAuth.username,
+          caseUsername: e2eAuth.caseUsername,
+          corpUsername: e2eAuth.corpUsername,
+          hasPassword: Boolean(e2eAuth.password),
+          hasCasePassword: Boolean(e2eAuth.casePassword),
+          hasCorpPassword: Boolean(e2eAuth.corpPassword),
+        }
+      : null,
   };
 }
 
@@ -54,7 +84,9 @@ async function fetchProjectById(id: string): Promise<Project | null> {
   return rows[0] ? rowToProject(rows[0]) : null;
 }
 
-export async function createProject(input: CreateProjectInput): Promise<Project> {
+export async function createProject(
+  input: CreateProjectServiceInput,
+): Promise<Project> {
   const id =
     input.id ??
     input.name
@@ -66,8 +98,8 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
     `INSERT INTO projects (
       id, name, frontend_git_url, frontend_branch,
       backend_git_url, backend_branch, local_path_override, target_url,
-      clone_status
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'idle')
+      e2e_auth_json, clone_status
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'idle')
     ON CONFLICT (id) DO UPDATE SET
       name = EXCLUDED.name,
       frontend_git_url = EXCLUDED.frontend_git_url,
@@ -76,6 +108,7 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
       backend_branch = EXCLUDED.backend_branch,
       local_path_override = EXCLUDED.local_path_override,
       target_url = EXCLUDED.target_url,
+      e2e_auth_json = EXCLUDED.e2e_auth_json,
       updated_at = NOW()
     RETURNING *`,
     [
@@ -87,6 +120,7 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
       input.backendBranch,
       input.localPathOverride ?? null,
       input.targetUrl || null,
+      input.e2eAuth ? JSON.stringify(input.e2eAuth) : null,
     ],
   );
   const project = rowToProject(rows[0]);
@@ -118,6 +152,11 @@ export async function updateProject(
   const targetUrl =
     input.targetUrl !== undefined ? input.targetUrl || null : existing.targetUrl;
 
+  let e2eAuth = existing.e2eAuth;
+  if (input.e2eAuth !== undefined) {
+    e2eAuth = mergeE2eAuthUpdate(existing.e2eAuth, input.e2eAuth);
+  }
+
   const gitChanged =
     frontendGitUrl !== existing.frontendGitUrl ||
     backendGitUrl !== existing.backendGitUrl ||
@@ -139,6 +178,7 @@ export async function updateProject(
       backend_branch = $6,
       local_path_override = $7,
       target_url = $8,
+      e2e_auth_json = $9,
       updated_at = NOW()
       ${cloneReset}
     WHERE id = $1
@@ -152,6 +192,7 @@ export async function updateProject(
       backendBranch,
       localPathOverride,
       targetUrl,
+      e2eAuth ? JSON.stringify(e2eAuth) : null,
     ],
   );
   const project = rows[0] ? rowToProject(rows[0]) : null;

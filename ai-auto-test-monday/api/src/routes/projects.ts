@@ -9,6 +9,7 @@ import {
   deleteProject,
   getProject,
   listProjects,
+  toPublicProject,
   updateProject,
 } from "../services/project-service.js";
 
@@ -17,7 +18,7 @@ export function createProjectsRouter(): Router {
 
   router.get("/", async (_req, res) => {
     const projects = await listProjects();
-    res.json({ ok: true, projects });
+    res.json({ ok: true, projects: projects.map(toPublicProject) });
   });
 
   router.post("/", async (req, res) => {
@@ -27,7 +28,7 @@ export function createProjectsRouter(): Router {
       return;
     }
     const project = await createProject(parsed.data);
-    res.status(201).json({ ok: true, project });
+    res.status(201).json({ ok: true, project: toPublicProject(project) });
   });
 
   router.get("/:id", async (req, res) => {
@@ -36,7 +37,7 @@ export function createProjectsRouter(): Router {
       res.status(404).json({ ok: false, error: "not found" });
       return;
     }
-    res.json({ ok: true, project });
+    res.json({ ok: true, project: toPublicProject(project) });
   });
 
   router.put("/:id", async (req, res) => {
@@ -50,7 +51,7 @@ export function createProjectsRouter(): Router {
       res.status(404).json({ ok: false, error: "not found" });
       return;
     }
-    res.json({ ok: true, project });
+    res.json({ ok: true, project: toPublicProject(project) });
   });
 
   router.delete("/:id", async (req, res) => {

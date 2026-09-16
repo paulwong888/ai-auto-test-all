@@ -22,6 +22,7 @@ export async function migrate(): Promise<void> {
     "003_execution.sql",
     "004_overlay_workflow.sql",
     "005_run_options.sql",
+    "006_project_e2e_auth.sql",
   ];
   for (const file of files) {
     const sql = await readFile(path.join(migrationsDir, file), "utf8");

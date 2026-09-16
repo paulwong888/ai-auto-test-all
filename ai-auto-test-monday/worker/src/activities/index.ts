@@ -11,6 +11,7 @@ import {
   runChoreographer,
   runAssistantDirector,
   runContinuityLead,
+  buildExecutionReport,
   resolveAvailablePomsFromDir,
   normalizePomExportClass,
   pomFileNameToClassName,
@@ -291,20 +292,90 @@ export async function continuityLead(
     `[continuityLead] start runId=${input.runId} mode=${input.executionMode ?? "auto"}${input.journeyIds?.length ? ` journeyIds=${input.journeyIds.join(",")}` : ""}`,
   );
 
-  const report = await runContinuityLead({
-    projectId: input.projectId,
-    runId: input.runId,
-    artifactRoot: input.artifactRoot,
-    frontendPath: input.frontendPath,
-    targetUrl: input.targetUrl,
-    executionMode: input.executionMode,
-    platformBaseUrl: process.env.PLATFORM_BASE_URL,
-    projectName: input.projectId,
-    journeyIds: input.journeyIds,
-  });
-
+  const reportMode =
+    input.executionMode === "auto" || input.executionMode == null
+      ? "direct"
+      : input.executionMode;
   const out = path.join(input.artifactRoot, "execution-report.json");
-  await writeJson(out, report);
+  let report: Awaited<ReturnType<typeof runContinuityLead>> | undefined;
+
+  const activityContext = Context.current();
+  const abortController = new AbortController();
+  const onActivityCancel = () => abortController.abort();
+  activityContext.cancellationSignal.addEventListener(
+    "abort",
+    onActivityCancel,
+    { once: true },
+  );
+
+  try {
+    report = await runContinuityLead({
+      projectId: input.projectId,
+      runId: input.runId,
+      artifactRoot: input.artifactRoot,
+      frontendPath: input.frontendPath,
+      targetUrl: input.targetUrl,
+      e2eAuth: input.e2eAuth,
+      executionMode: input.executionMode,
+      platformBaseUrl: process.env.PLATFORM_BASE_URL,
+      projectName: input.projectId,
+      journeyIds: input.journeyIds,
+      shouldCancel: () => activityContext.cancellationSignal.aborted,
+      abortSignal: abortController.signal,
+    });
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    if (error.includes("cancelled")) {
+      await updateExecutionStatus(input.runId, null, input.executionMode);
+      await clearRunCurrentAgent(input.runId);
+      await publishProgress(input.runId, {
+        agent: "continuityLead",
+        status: "cancelled",
+        artifactRoot: input.artifactRoot,
+      });
+      throw err;
+    }
+    report = buildExecutionReport(
+      [
+        {
+          journeyId: "_activity_error",
+          title: "Continuity Lead activity error",
+          status: "failed",
+          attempts: 0,
+          error: error.slice(0, 2000),
+          executionMode: reportMode,
+        },
+      ],
+      reportMode,
+    );
+    await writeJson(out, report);
+    await insertArtifactIndex(
+      input.runId,
+      "continuityLead",
+      "execution-report",
+      out,
+      {
+        passed: report.summary.passed,
+        failed: report.summary.failed,
+      },
+    );
+    await updateExecutionStatus(input.runId, "failed", input.executionMode);
+    await clearRunCurrentAgent(input.runId);
+    await publishProgress(input.runId, {
+      agent: "continuityLead",
+      status: "execution-failed",
+      artifactRoot: input.artifactRoot,
+      error,
+    });
+    throw err;
+  } finally {
+    activityContext.cancellationSignal.removeEventListener(
+      "abort",
+      onActivityCancel,
+    );
+  }
+
+  await writeJson(out, report!);
   await insertArtifactIndex(input.runId, "continuityLead", "execution-report", out, {
     passed: report.summary.passed,
     failed: report.summary.failed,

@@ -33,14 +33,16 @@ const BASE_ARTIFACT_LINKS = [
   { key: "execution-report", label: "execution-report.json", agent: "continuityLead" },
 ] as const;
 
-const CORE_KEYS = new Set([
+const CORE_ARTIFACT_ORDER = [
   "registry",
   "injections",
   "locators",
+  "apply-report",
   "journeys",
   "execution-report",
-  "apply-report",
-]);
+] as const;
+
+const CORE_KEYS = new Set<string>(CORE_ARTIFACT_ORDER);
 
 function resolveArtifactAgent(key: string): string {
   const base = BASE_ARTIFACT_LINKS.find((b) => b.key === key);
@@ -72,10 +74,23 @@ interface RunRecord {
   execution_status?: string | null;
 }
 
+function coreArtifactRank(key: string): number {
+  const idx = CORE_ARTIFACT_ORDER.indexOf(
+    key as (typeof CORE_ARTIFACT_ORDER)[number],
+  );
+  return idx === -1 ? CORE_ARTIFACT_ORDER.length : idx;
+}
+
 function groupArtifactLinks(links: ArtifactLink[]) {
-  const core = links.filter((a) => CORE_KEYS.has(a.key));
-  const poms = links.filter((a) => a.key.startsWith("pom-"));
-  const specs = links.filter((a) => a.key.startsWith("spec-"));
+  const core = links
+    .filter((a) => CORE_KEYS.has(a.key))
+    .sort((a, b) => coreArtifactRank(a.key) - coreArtifactRank(b.key));
+  const poms = links
+    .filter((a) => a.key.startsWith("pom-"))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  const specs = links
+    .filter((a) => a.key.startsWith("spec-"))
+    .sort((a, b) => a.label.localeCompare(b.label));
   return { core, poms, specs };
 }
 
@@ -446,7 +461,7 @@ export default function App() {
         if (
           execStatus === "completed" ||
           execStatus === "failed" ||
-          listHasReport
+          (listHasReport && execStatus !== "running")
         ) {
           await loadArtifact("execution-report", id);
         }
@@ -502,7 +517,7 @@ export default function App() {
   }, [clearRunViewState, loadHistoricalRun]);
 
   async function runExecuteJourneys(journeyIds: string[]) {
-    if (!runId || journeyIds.length === 0) return;
+    if (!runId) return;
     setLoading(true);
     setExecutingOnly(true);
     setError(null);
@@ -757,9 +772,12 @@ export default function App() {
     progress?.status === "failed" &&
     typeof progress.error === "string" &&
     progress.error.includes("Choreographer");
+  const showExecutionReportMissingHint =
+    executionStatus === "failed" && !hasExecutionReport;
   const showExecutionFailedHint =
-    executionStatus === "failed" ||
-    (progress?.status === "failed" && !showChoreographerFailedHint);
+    !showExecutionReportMissingHint &&
+    (executionStatus === "failed" ||
+      (progress?.status === "failed" && !showChoreographerFailedHint));
 
   function isArtifactReady(agentId: string): boolean {
     if (agentId === "continuityLead" && hasExecutionReport) return true;
@@ -940,11 +958,26 @@ export default function App() {
           {progress?.error && (
             <p className="error">{progress.error}</p>
           )}
+          {showExecutionReportMissingHint && (
+            <p className="hint warn">
+              执行报告已缺失（可能因重新生成 artifact 被清理）。请在项目设置中配置
+              E2E 登录信息后点击「补跑执行」。
+            </p>
+          )}
+          {executionStatus === "running" && (
+            <p className="hint">
+              Continuity Lead 正在执行 Playwright 测试…
+              {hasExecutionReport
+                ? " 当前 execution-report 可能尚未更新。"
+                : ""}
+            </p>
+          )}
           {showExecutionFailedHint && (
             <p className="hint warn">
               Continuity Lead 执行失败
-              {progress?.error ? `：${progress.error}` : ""}。可查看 execution-report
-              或改用 auto/platform 模式补跑。
+              {progress?.error ? `：${progress.error}` : ""}。请查看
+              execution-report 中的 failureType（A=方法缺失，B=定位器，C=权限/登录）；
+              也可从 Assistant Director 重新生成后补跑。
             </p>
           )}
           {showChoreographerFailedHint && (
@@ -1015,6 +1048,7 @@ export default function App() {
                   onViewSpec={(key) => void loadJourneySpecOverlay(key)}
                   onRetryJourneys={(ids) => void runExecuteJourneys(ids)}
                   retryDisabled={loading}
+                  executionRunning={executionStatus === "running"}
                 />
               ) : (
                 <p className="hint preview-empty">加载中…</p>

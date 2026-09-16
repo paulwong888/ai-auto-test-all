@@ -67,6 +67,7 @@ export interface InjectionsPreview {
 
 export interface ExecutionReportPreview {
   version?: string;
+  generatedAt?: string;
   executionMode?: string;
   summary: {
     total: number;
