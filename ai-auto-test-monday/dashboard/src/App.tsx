@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   ArtifactPreview,
   previewMetaForArtifact,
@@ -47,6 +54,7 @@ interface ArtifactLink {
   key: string;
   label: string;
   agent: string;
+  available?: boolean;
 }
 
 interface Progress {
@@ -69,6 +77,27 @@ function groupArtifactLinks(links: ArtifactLink[]) {
   const poms = links.filter((a) => a.key.startsWith("pom-"));
   const specs = links.filter((a) => a.key.startsWith("spec-"));
   return { core, poms, specs };
+}
+
+function CollapsibleLinkGroup({
+  title,
+  items,
+  renderLink,
+}: {
+  title: string;
+  items: ArtifactLink[];
+  renderLink: (a: ArtifactLink) => ReactNode;
+}) {
+  if (items.length === 0) return null;
+
+  return (
+    <details className="link-group-details" open={items.length <= 5}>
+      <summary className="link-group-title">
+        {title} ({items.length})
+      </summary>
+      <div className="link-group-items">{items.map(renderLink)}</div>
+    </details>
+  );
 }
 
 function readRunIdFromUrl(): string | null {
@@ -101,6 +130,7 @@ export default function App() {
   const [executingOnly, setExecutingOnly] = useState(false);
   const [activeRun, setActiveRun] = useState<RunRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [applyTestIds, setApplyTestIds] = useState(false);
   const [executeAfterGenerate, setExecuteAfterGenerate] = useState(true);
   const [executionMode, setExecutionMode] = useState<"auto" | "platform" | "direct">(
@@ -119,10 +149,16 @@ export default function App() {
     if (listData.ok && listData.files?.length) {
       setArtifactLinks(
         listData.files.map(
-          (f: { key: string; label: string; agent?: string }) => ({
+          (f: {
+            key: string;
+            label: string;
+            agent?: string;
+            available?: boolean;
+          }) => ({
             key: f.key,
             label: f.label,
             agent: f.agent ?? resolveArtifactAgent(f.key),
+            available: f.available !== false,
           }),
         ),
       );
@@ -144,16 +180,16 @@ export default function App() {
       setJourneySpecOverlay(null);
       setActiveArtifactKey(name);
       setPreview("");
+      setPreviewMeta("");
       if (err.code === "ARTIFACT_NOT_READY") {
-        setPreviewMeta("该 artifact 尚未生成，请等待对应 Agent 完成");
+        setPreviewError("文件不存在或尚未生成，请等待对应 Agent 完成");
         return;
       }
-      setPreviewMeta("");
-      setError(err.error ?? `加载失败 (${res.status})`);
+      setPreviewError(err.error ?? `加载失败 (${res.status})`);
       return;
     }
     const text = await res.text();
-    setError(null);
+    setPreviewError(null);
     setJourneySpecOverlay(null);
     setActiveArtifactKey(name);
     setPreview(text);
@@ -666,7 +702,7 @@ export default function App() {
   }
 
   function renderLink(a: ArtifactLink) {
-    const ready = isArtifactReady(a.agent);
+    const ready = isArtifactReady(a.agent) && a.available !== false;
     const generating = stepStatus(a.agent) === "active";
     const active = activeArtifactKey === a.key;
     return (
@@ -872,18 +908,16 @@ export default function App() {
                 {linkGroups.core.map(renderLink)}
               </div>
             )}
-            {linkGroups.poms.length > 0 && (
-              <div className="link-group">
-                <span className="link-group-title">POMs</span>
-                {linkGroups.poms.map(renderLink)}
-              </div>
-            )}
-            {linkGroups.specs.length > 0 && (
-              <div className="link-group">
-                <span className="link-group-title">Playwright Specs</span>
-                {linkGroups.specs.map(renderLink)}
-              </div>
-            )}
+            <CollapsibleLinkGroup
+              title="POMs"
+              items={linkGroups.poms}
+              renderLink={renderLink}
+            />
+            <CollapsibleLinkGroup
+              title="Playwright Specs"
+              items={linkGroups.specs}
+              renderLink={renderLink}
+            />
           </div>
           {showPreviewBack && (
             <div className="preview-nav">
@@ -900,17 +934,26 @@ export default function App() {
             </div>
           )}
           <div className="layout-preview" ref={previewScrollRef}>
-            {preview ? (
-              <ArtifactPreview
-                artifactKey={activeArtifactKey ?? ""}
-                content={preview}
-                availableSpecKeys={availableSpecKeys}
-                journeySpecOverlay={journeySpecOverlay}
-                onCloseJourneySpec={() => setJourneySpecOverlay(null)}
-                onViewSpec={(key) => void loadJourneySpecOverlay(key)}
-                onRetryJourneys={(ids) => void runExecuteJourneys(ids)}
-                retryDisabled={loading}
-              />
+            {activeArtifactKey ? (
+              previewError ? (
+                <div className="preview-error">
+                  <p className="error">{previewError}</p>
+                  <p className="hint mono muted">{activeArtifactKey}</p>
+                </div>
+              ) : preview ? (
+                <ArtifactPreview
+                  artifactKey={activeArtifactKey}
+                  content={preview}
+                  availableSpecKeys={availableSpecKeys}
+                  journeySpecOverlay={journeySpecOverlay}
+                  onCloseJourneySpec={() => setJourneySpecOverlay(null)}
+                  onViewSpec={(key) => void loadJourneySpecOverlay(key)}
+                  onRetryJourneys={(ids) => void runExecuteJourneys(ids)}
+                  retryDisabled={loading}
+                />
+              ) : (
+                <p className="hint preview-empty">加载中…</p>
+              )
             ) : (
               <p className="hint preview-empty">点击上方链接加载 artifact…</p>
             )}

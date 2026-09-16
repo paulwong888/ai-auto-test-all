@@ -132,6 +132,9 @@ button.btn-secondary {
   flex-direction: column;
   min-height: 520px;
   max-height: calc(100vh - 160px);
+  overflow: hidden;
+  position: sticky;
+  top: 24px;
 }
 
 .panel {
@@ -226,9 +229,9 @@ pre {
   gap: 6px;
   margin-bottom: 12px;
   flex-shrink: 0;
-  position: sticky;
-  top: 0;
-  z-index: 2;
+  max-height: min(240px, 35vh);
+  overflow-y: auto;
+  overflow-x: hidden;
   background: white;
   padding-bottom: 8px;
   border-bottom: 1px solid #f1f5f9;
@@ -238,6 +241,8 @@ pre {
   display: block;
   color: #2563eb;
   font-size: 13px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .links a.disabled {
@@ -251,7 +256,7 @@ pre {
   background: #eff6ff;
   padding: 2px 6px;
   border-radius: 4px;
-  margin: -2px -6px;
+  margin: 0;
 }
 
 .link-group {
@@ -268,6 +273,27 @@ pre {
   letter-spacing: 0.04em;
   color: #94a3b8;
   margin-bottom: 2px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.link-group-details {
+  margin-bottom: 6px;
+}
+
+.link-group-details .link-group-title {
+  display: list-item;
+}
+
+.link-group-details .link-group-items {
+  max-height: 180px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 8px;
+  margin-top: 4px;
 }
 
 .preview-nav {
@@ -291,8 +317,63 @@ pre {
 
 .layout-preview {
   flex: 1;
+  min-height: 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* POM/Spec/JSON code preview: single inner scroll, no outer layout-preview scrollbar */
+.layout-preview:has(.code-preview):not(:has(.journeys-panel)) {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
+}
+
+.layout-preview:has(.code-preview):not(:has(.journeys-panel)) .code-preview {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.layout-preview:has(.code-preview):not(:has(.journeys-panel)) .code-preview pre {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.panel-preview pre,
+.panel-preview .code-preview pre {
+  overflow-x: hidden;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.panel-preview .journeys-panel,
+.panel-preview .journey-card {
+  overflow-x: hidden;
+  min-width: 0;
+}
+
+.panel-preview .gherkin-text,
+.panel-preview .journey-id,
+.panel-preview .pom-steps .mono {
+  overflow-wrap: anywhere;
+}
+
+.panel-preview .artifact-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.panel-preview .artifact-table td,
+.panel-preview .artifact-table th {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .journey-spec-overlay {
@@ -320,6 +401,13 @@ pre {
 .preview-empty {
   padding: 24px;
   text-align: center;
+}
+
+.preview-error {
+  padding: 16px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
 }
 
 /* ── Gherkin journey cards ── */
@@ -371,6 +459,11 @@ pre {
 .journey-card h3 {
   margin: 0;
   font-size: 15px;
+}
+
+.journey-id {
+  margin: 2px 0 0;
+  font-size: 12px;
 }
 
 .journey-scenario {

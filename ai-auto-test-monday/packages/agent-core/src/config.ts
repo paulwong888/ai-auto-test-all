@@ -66,6 +66,30 @@ export function loadJourneyConfigFromEnv(
   };
 }
 
+export interface PipelineScaleConfig {
+  pomBatchSize: number;
+  choreographerBatchSize: number;
+  fullCoverage: boolean;
+}
+
+function parseBoolEnv(value: string | undefined, defaultValue: boolean): boolean {
+  if (value == null || value.trim() === "") return defaultValue;
+  return !/^(0|false|no)$/i.test(value.trim());
+}
+
+export function loadPipelineScaleConfigFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): PipelineScaleConfig {
+  return {
+    pomBatchSize: Math.max(1, Number(env.POM_BATCH_SIZE ?? 5)),
+    choreographerBatchSize: Math.max(
+      1,
+      Number(env.CHOREOGRAPHER_BATCH_SIZE ?? 8),
+    ),
+    fullCoverage: parseBoolEnv(env.FULL_COVERAGE, true),
+  };
+}
+
 /** Shorter timeout for Choreographer so pipeline does not appear stuck. */
 export function loadChoreographerLlmConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,

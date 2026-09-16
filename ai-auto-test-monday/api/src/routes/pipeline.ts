@@ -186,7 +186,7 @@ export function createPipelineRouter(): Router {
     try {
       const { run } = await getPipelineRun(req.params.runId);
       const artifactRoot = String(run.artifact_root);
-      const indexed = await listArtifactsFromIndex(req.params.runId);
+      const indexed = await listArtifactsFromIndex(req.params.runId, artifactRoot);
       const files =
         indexed.length > 0
           ? indexed.map((f) => ({
@@ -195,8 +195,12 @@ export function createPipelineRouter(): Router {
               kind: f.kind,
               agent: f.agent,
               summary: f.summary,
+              available: f.available,
             }))
-          : await listArtifactFiles(artifactRoot);
+          : (await listArtifactFiles(artifactRoot)).map((f) => ({
+              ...f,
+              available: true,
+            }));
       res.json({ ok: true, files, source: indexed.length > 0 ? "index" : "filesystem" });
     } catch (err) {
       res.status(404).json({

@@ -637,6 +637,46 @@ export async function cancelPipeline(runId: string): Promise<void> {
   );
 }
 
+const ARTIFACT_JSON_FILES: Record<string, string> = {
+  registry: "component-registry.json",
+  injections: "testid-injections.json",
+  locators: "locator-catalog.json",
+  journeys: "journeys.json",
+  "execution-report": "execution-report.json",
+  "apply-report": "apply-report.json",
+};
+
+export function resolveArtifactPath(
+  artifactRoot: string,
+  key: string,
+): string | null {
+  if (key.startsWith("pom-")) {
+    return path.join(artifactRoot, "poms", key.slice(4));
+  }
+  if (key.startsWith("spec-")) {
+    return path.join(artifactRoot, "tests", key.slice(5));
+  }
+  const rel = ARTIFACT_JSON_FILES[key];
+  if (rel) {
+    return path.join(artifactRoot, rel);
+  }
+  return null;
+}
+
+export async function artifactExists(
+  artifactRoot: string,
+  key: string,
+): Promise<boolean> {
+  const filePath = resolveArtifactPath(artifactRoot, key);
+  if (!filePath) return true;
+  try {
+    await access(filePath, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface ArtifactIndexEntry {
   key: string;
   label: string;
@@ -644,6 +684,7 @@ export interface ArtifactIndexEntry {
   agent: string;
   artifactType: string;
   summary?: Record<string, unknown>;
+  available: boolean;
 }
 
 function indexEntryToKey(
@@ -680,10 +721,11 @@ function indexEntryToKey(
 
 export async function listArtifactsFromIndex(
   runId: string,
+  artifactRoot: string,
 ): Promise<ArtifactIndexEntry[]> {
   const { rows } = await pool.query(
     `SELECT agent, artifact_type, file_path, summary_json
-     FROM artifacts_index WHERE run_id = $1 ORDER BY id ASC`,
+     FROM artifacts_index WHERE run_id = $1 ORDER BY id DESC`,
     [runId],
   );
   if (rows.length === 0) return [];
@@ -694,11 +736,20 @@ export async function listArtifactsFromIndex(
     const mapped = indexEntryToKey(String(row.artifact_type), String(row.file_path));
     if (seen.has(mapped.key)) continue;
     seen.add(mapped.key);
+
+    const isTextArtifact =
+      mapped.key.startsWith("pom-") || mapped.key.startsWith("spec-");
+    const available = isTextArtifact
+      ? await artifactExists(artifactRoot, mapped.key)
+      : true;
+    if (!available) continue;
+
     items.push({
       ...mapped,
       agent: String(row.agent),
       artifactType: String(row.artifact_type),
       summary: row.summary_json as Record<string, unknown> | undefined,
+      available,
     });
   }
   return items;

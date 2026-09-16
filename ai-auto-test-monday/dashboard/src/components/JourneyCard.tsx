@@ -37,6 +37,7 @@ export function JourneyCard({ journey, specAvailable, onViewSpec }: Props) {
               <span className="category-badge">{journey.category}</span>
             )}
           </div>
+          <p className="journey-id mono muted">{journey.id}</p>
           {scenario && <p className="journey-scenario">{scenario}</p>}
           {journey.description && (
             <p className="journey-desc">{journey.description}</p>

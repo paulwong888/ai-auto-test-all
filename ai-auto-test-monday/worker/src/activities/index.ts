@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Context } from "@temporalio/activity";
 import type { PipelineInput } from "@monday/agent-core/workflow";
@@ -242,6 +242,18 @@ export async function assistantDirector(input: PipelineInput): Promise<void> {
     targetUrl: input.targetUrl,
   });
 
+  const keepSpecFiles = new Set(specs.map((spec) => spec.fileName));
+  try {
+    const existing = await readdir(testsDir);
+    for (const file of existing.filter((f) => f.endsWith(".spec.ts"))) {
+      if (!keepSpecFiles.has(file)) {
+        await unlink(path.join(testsDir, file));
+      }
+    }
+  } catch {
+    // tests dir may not exist yet
+  }
+
   for (const spec of specs) {
     const filePath = path.join(testsDir, spec.fileName);
     await writeFile(filePath, spec.content, "utf8");
@@ -274,6 +286,10 @@ export async function continuityLead(
     input.executionMode,
   );
   await notify(input, "continuityLead", "started");
+
+  console.info(
+    `[continuityLead] start runId=${input.runId} mode=${input.executionMode ?? "auto"}${input.journeyIds?.length ? ` journeyIds=${input.journeyIds.join(",")}` : ""}`,
+  );
 
   const report = await runContinuityLead({
     projectId: input.projectId,
@@ -316,6 +332,10 @@ export async function continuityLead(
         ? `${report.summary.failed} journey(s) failed`
         : undefined,
   });
+
+  console.info(
+    `[continuityLead] done runId=${input.runId} mode=${report.executionMode} passed=${report.summary.passed} failed=${report.summary.failed} flaky=${report.summary.flaky ?? 0} skipped=${report.summary.skipped}`,
+  );
 
   return {
     failed: report.summary.failed,

@@ -20,3 +20,4 @@ export * from "./lib/materialize-artifacts.js";
 export * from "./lib/journeys-to-features.js";
 export * from "./lib/playwright-direct.js";
 export * from "./lib/pom-utils.js";
+export * from "./lib/pipeline-batch.js";
