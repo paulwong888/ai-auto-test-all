@@ -170,6 +170,7 @@ services:
       EXECUTION_MODE: ${EXECUTION_MODE:-auto}
       PLAYWRIGHT_CLI_PATH: ${PLAYWRIGHT_CLI_PATH:-/data/repos/sandbox/demo-app/node_modules/@playwright/test/cli.js}
       PLAYWRIGHT_NODE_PATH: ${PLAYWRIGHT_NODE_PATH:-/data/repos/sandbox/demo-app/node_modules}
+      PLAYWRIGHT_TEST_TIMEOUT_MS: ${PLAYWRIGHT_TEST_TIMEOUT_MS:-50000}
       POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
       POSTGRES_PORT: ${POSTGRES_PORT:-5433}
       POSTGRES_DB: ${POSTGRES_DB:-ai_auto_test_monday}

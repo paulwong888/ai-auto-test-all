@@ -450,6 +450,21 @@ pre {
   min-height: 60vh;
 }
 
+.modal-body .journeys-panel {
+  min-height: 50vh;
+}
+
+.modal-body .journeys-panel,
+.modal-body .journey-card {
+  overflow-x: hidden;
+  min-width: 0;
+}
+
+.modal-body .journey-id,
+.modal-body .gherkin-text {
+  overflow-wrap: anywhere;
+}
+
 .preview-empty {
   padding: 24px;
   text-align: center;

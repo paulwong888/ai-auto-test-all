@@ -11,8 +11,22 @@ export interface DirectRunOptions {
   e2eEnv?: Record<string, string>;
   playwrightCliPath?: string;
   nodePath?: string;
+  /** Per-test timeout passed to Playwright CLI (`--timeout`). */
+  playwrightTestTimeoutMs?: number;
+  /** Outer subprocess kill timeout for the whole spec run. */
   timeoutMs?: number;
   abortSignal?: AbortSignal;
+}
+
+const DEFAULT_PLAYWRIGHT_TEST_TIMEOUT_MS = 50_000;
+
+export function resolvePlaywrightTestTimeoutMs(
+  overrideMs?: number,
+): number {
+  if (overrideMs != null && overrideMs > 0) return overrideMs;
+  const fromEnv = Number(process.env.PLAYWRIGHT_TEST_TIMEOUT_MS);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
+  return DEFAULT_PLAYWRIGHT_TEST_TIMEOUT_MS;
 }
 
 export interface DirectRunResult {
@@ -85,8 +99,11 @@ export function buildPlaywrightCommand(opts: DirectRunOptions): string {
   // Env vars must prefix `node` (not `VAR=... && node`): unexported assignments
   // are not inherited by child processes, breaking @playwright/test resolution
   // when playwright.config.ts loads from a repo with a broken node_modules symlink.
+  const testTimeoutMs = resolvePlaywrightTestTimeoutMs(
+    opts.playwrightTestTimeoutMs,
+  );
   parts.push(
-    `NODE_PATH=${shellQuote(resolvedNode)} PLAYWRIGHT_BASE_URL=${shellQuote(opts.targetUrl)} node ${shellQuote(resolvedCli)} test --config playwright.config.ts ${opts.specFile}`,
+    `NODE_PATH=${shellQuote(resolvedNode)} PLAYWRIGHT_BASE_URL=${shellQuote(opts.targetUrl)} node ${shellQuote(resolvedCli)} test --config playwright.config.ts --timeout=${testTimeoutMs} ${opts.specFile}`,
   );
 
   return parts.join(" && ");

@@ -11,6 +11,7 @@ import {
   CodePreview,
   previewMetaForArtifact,
 } from "./components/ArtifactPreview";
+import { JourneysPanel } from "./components/JourneyCard";
 import { JourneyEditorPanel } from "./components/JourneyEditorPanel";
 import { Modal } from "./components/Modal";
 import { ProjectPanel, type ProjectRecord } from "./components/ProjectPanel";
@@ -186,6 +187,14 @@ export default function App() {
     content: string;
   } | null>(null);
   const [journeyEditMode, setJourneyEditMode] = useState(false);
+  const [journeysViewOpen, setJourneysViewOpen] = useState(false);
+  const [journeysModalDoc, setJourneysModalDoc] = useState<JourneysDocument | null>(
+    null,
+  );
+  const [journeysModalLoading, setJourneysModalLoading] = useState(false);
+  const [journeysModalError, setJourneysModalError] = useState<string | null>(
+    null,
+  );
   const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
   const previewScrollRef = useRef<HTMLDivElement>(null);
   const activeRunRef = useRef<RunRecord | null>(null);
@@ -202,6 +211,10 @@ export default function App() {
     setPreviewError(null);
     setJourneySpecOverlay(null);
     setJourneyEditMode(false);
+    setJourneysViewOpen(false);
+    setJourneysModalDoc(null);
+    setJourneysModalLoading(false);
+    setJourneysModalError(null);
     setArtifactLinks([...BASE_ARTIFACT_LINKS]);
     setLoading(false);
     setExecutingOnly(false);
@@ -528,6 +541,60 @@ export default function App() {
     [runId],
   );
 
+  const parseJourneysDocument = useCallback(
+    (text: string): JourneysDocument | null => {
+      try {
+        const doc = JSON.parse(text) as JourneysDocument;
+        return doc?.journeys ? doc : null;
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
+
+  const closeJourneysViewModal = useCallback(() => {
+    setJourneysViewOpen(false);
+    setJourneysModalError(null);
+    setJourneysModalLoading(false);
+  }, []);
+
+  const openJourneysViewModal = useCallback(async () => {
+    if (!runId) return;
+    setJourneysViewOpen(true);
+    setJourneysModalError(null);
+
+    if (activeArtifactKey === "journeys" && preview) {
+      const doc = parseJourneysDocument(preview);
+      if (doc) {
+        setJourneysModalDoc(doc);
+        return;
+      }
+    }
+
+    setJourneysModalLoading(true);
+    try {
+      const res = await fetch(
+        `/api/pipeline/runs/${runId}/artifacts/journeys`,
+      );
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error ?? `加载失败 (${res.status})`);
+      }
+      const text = await res.text();
+      const doc = parseJourneysDocument(text);
+      if (!doc) {
+        throw new Error("journeys.json 格式无效");
+      }
+      setJourneysModalDoc(doc);
+    } catch (e) {
+      setJourneysModalDoc(null);
+      setJourneysModalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setJourneysModalLoading(false);
+    }
+  }, [runId, activeArtifactKey, preview, parseJourneysDocument]);
+
   const loadHistoricalRun = useCallback(
     async (id: string) => {
       setRunId(id);
@@ -816,13 +883,10 @@ export default function App() {
 
   const journeysDocForEdit = useMemo((): JourneysDocument | null => {
     if (activeArtifactKey !== "journeys" || !preview) return null;
-    try {
-      const doc = JSON.parse(preview) as JourneysDocument;
-      return doc?.journeys ? doc : null;
-    } catch {
-      return null;
-    }
-  }, [activeArtifactKey, preview]);
+    return parseJourneysDocument(preview);
+  }, [activeArtifactKey, preview, parseJourneysDocument]);
+
+  const showViewJourneysButton = !!runId && hasJourneysArtifact;
 
   function stepStatus(
     agentId: string,
@@ -1184,8 +1248,17 @@ export default function App() {
               renderLink={renderLink}
             />
           </div>
-          {(showPreviewBack || canEditJourneys) && (
+          {(showViewJourneysButton || showPreviewBack || canEditJourneys) && (
             <div className="preview-nav">
+              {showViewJourneysButton && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => void openJourneysViewModal()}
+                >
+                  查看 journeys
+                </button>
+              )}
               {showPreviewBack && (
                 <>
                   <button
@@ -1237,6 +1310,23 @@ export default function App() {
           </div>
         </section>
       </div>
+
+      <Modal
+        open={journeysViewOpen}
+        title="查看 journeys"
+        wide
+        onClose={closeJourneysViewModal}
+      >
+        {journeysModalLoading && <p className="hint">加载中…</p>}
+        {journeysModalError && <p className="error">{journeysModalError}</p>}
+        {journeysModalDoc && (
+          <JourneysPanel
+            doc={journeysModalDoc}
+            availableSpecKeys={availableSpecKeys}
+            onViewSpec={(key) => void loadJourneySpecOverlay(key)}
+          />
+        )}
+      </Modal>
 
       <Modal
         open={!!journeySpecOverlay}
