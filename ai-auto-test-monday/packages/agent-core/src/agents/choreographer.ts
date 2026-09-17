@@ -115,7 +115,7 @@ async function generateBatchWithLlm(
   batchCount: number,
 ): Promise<Journey[]> {
   const components = componentsForPoms(registry, batchPoms);
-  const llm = new HigressClient(loadChoreographerLlmConfigFromEnv());
+  const llm = new HigressClient(loadChoreographerLlmConfigFromEnv(), "choreographer");
 
   console.info(
     `[choreographer] batch ${batchIndex}/${batchCount} poms=${batchPoms.join(",")} journeys=${journeyMin}-${journeyMax}`,
@@ -206,7 +206,7 @@ async function generateWithLlm(
   journeyMax: number,
 ): Promise<Journey[]> {
   const components = componentsForPoms(registry, availablePoms);
-  const llm = new HigressClient(loadChoreographerLlmConfigFromEnv());
+  const llm = new HigressClient(loadChoreographerLlmConfigFromEnv(), "choreographer");
 
   let result;
   try {

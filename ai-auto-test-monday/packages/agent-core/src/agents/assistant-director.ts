@@ -188,7 +188,7 @@ async function tryLlmSpec(
     }
   }
 
-  const llm = new HigressClient(loadLlmConfigFromEnv());
+  const llm = new HigressClient(loadLlmConfigFromEnv(), "assistantDirector");
   const result = await llm.chatJson(
     `Generate a Playwright test spec for one user journey. Use ONLY async methods that already exist in the provided pomSnippets — do NOT invent or rename methods.
 No page.locator(), no CSS, no XPath, no waitForTimeout. Method names must match journey.steps[].method exactly.

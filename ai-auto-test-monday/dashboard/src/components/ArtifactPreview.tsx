@@ -95,8 +95,6 @@ interface Props {
   artifactKey: string;
   content: string;
   availableSpecKeys: Set<string>;
-  journeySpecOverlay?: { key: string; content: string } | null;
-  onCloseJourneySpec?: () => void;
   onViewSpec?: (artifactKey: string) => void;
   onRetryJourneys?: (journeyIds: string[]) => void;
   retryDisabled?: boolean;
@@ -223,7 +221,13 @@ function LocatorsPreviewView({ data }: { data: LocatorsPreview }) {
   );
 }
 
-function CodePreview({ content, language }: { content: string; language: string }) {
+export function CodePreview({
+  content,
+  language,
+}: {
+  content: string;
+  language: string;
+}) {
   return (
     <div className="code-preview">
       <div className="code-preview-label">{language}</div>
@@ -243,34 +247,10 @@ function JsonPreview({ content }: { content: string }) {
   );
 }
 
-function JourneySpecOverlay({
-  specKey,
-  content,
-  onClose,
-}: {
-  specKey: string;
-  content: string;
-  onClose: () => void;
-}) {
-  return (
-    <div className="journey-spec-overlay">
-      <div className="journey-spec-overlay-header">
-        <span className="mono muted">{specKey.replace(/^spec-/, "tests/")}.spec.ts</span>
-        <button type="button" className="preview-back" onClick={onClose}>
-          关闭 Spec
-        </button>
-      </div>
-      <CodePreview content={content} language="Playwright Spec" />
-    </div>
-  );
-}
-
 export function ArtifactPreview({
   artifactKey,
   content,
   availableSpecKeys,
-  journeySpecOverlay,
-  onCloseJourneySpec,
   onViewSpec,
   onRetryJourneys,
   retryDisabled,
@@ -280,20 +260,11 @@ export function ArtifactPreview({
     const doc = tryParseJson<JourneysDocument>(content);
     if (doc?.journeys) {
       return (
-        <>
-          {journeySpecOverlay && onCloseJourneySpec && (
-            <JourneySpecOverlay
-              specKey={journeySpecOverlay.key}
-              content={journeySpecOverlay.content}
-              onClose={onCloseJourneySpec}
-            />
-          )}
-          <JourneysPanel
-            doc={doc}
-            availableSpecKeys={availableSpecKeys}
-            onViewSpec={onViewSpec}
-          />
-        </>
+        <JourneysPanel
+          doc={doc}
+          availableSpecKeys={availableSpecKeys}
+          onViewSpec={onViewSpec}
+        />
       );
     }
   }

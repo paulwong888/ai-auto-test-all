@@ -1,6 +1,5 @@
-import { readdir, rm, unlink } from "node:fs/promises";
-import path from "node:path";
 import type { AgentId } from "@monday/agent-core/workflow";
+import type { ArtifactStore } from "@monday/agent-core";
 
 const DOWNSTREAM_FILES: Partial<Record<AgentId, string[]>> = {
   scriptAnalyst: [
@@ -36,36 +35,19 @@ export function downstreamDeletesExecutionReport(fromAgent: AgentId): boolean {
 }
 
 export async function cleanupDownstreamArtifacts(
-  artifactRoot: string,
+  store: ArtifactStore,
+  prefix: string,
   fromAgent: AgentId,
 ): Promise<void> {
   for (const file of DOWNSTREAM_FILES[fromAgent] ?? []) {
-    try {
-      await unlink(path.join(artifactRoot, file));
-    } catch {
-      // file may not exist
-    }
+    await store.deleteObject(prefix, file);
   }
 
   for (const dir of DOWNSTREAM_DIRS[fromAgent] ?? []) {
-    try {
-      await rm(path.join(artifactRoot, dir), { recursive: true, force: true });
-    } catch {
-      // directory may not exist
-    }
+    await store.deletePrefix(prefix, dir);
   }
 
   if (fromAgent === "assistantDirector") {
-    const testsDir = path.join(artifactRoot, "tests");
-    try {
-      const specs = await readdir(testsDir);
-      await Promise.all(
-        specs
-          .filter((f) => f.endsWith(".spec.ts"))
-          .map((f) => unlink(path.join(testsDir, f)).catch(() => {})),
-      );
-    } catch {
-      // no tests dir
-    }
+    await store.deletePrefix(prefix, "tests");
   }
 }

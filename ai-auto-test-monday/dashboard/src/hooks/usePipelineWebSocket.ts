@@ -155,9 +155,10 @@ export function usePipelineWebSocket(
           setProgress((prev) => ({
             status: "running",
             currentAgent: agent,
-            completedAgents: prev?.completedAgents?.length
-              ? prev.completedAgents
-              : baseCompleted,
+            completedAgents:
+              prev?.status === "running" && prev.completedAgents.length > 0
+                ? prev.completedAgents
+                : baseCompleted,
             artifactRoot: msg.artifactRoot ?? prev?.artifactRoot,
             executeAfterGenerate: executeAfterGenerateRef.current,
             skippedAgents: prev?.skippedAgents ?? [],

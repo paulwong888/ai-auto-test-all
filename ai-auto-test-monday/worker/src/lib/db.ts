@@ -37,6 +37,26 @@ export async function updateExecutionStatus(
   }
 }
 
+export async function finalizeRunStatus(
+  runId: string,
+  status: "completed" | "failed" | "cancelled",
+  error?: string | null,
+): Promise<void> {
+  try {
+    await getPool().query(
+      `UPDATE pipeline_runs SET
+        status = $2,
+        current_agent = NULL,
+        finished_at = COALESCE(finished_at, NOW()),
+        error = $3
+       WHERE id = $1`,
+      [runId, status, error ?? null],
+    );
+  } catch (err) {
+    console.warn("[db] finalizeRunStatus failed:", err);
+  }
+}
+
 export async function clearRunCurrentAgent(
   runId: string,
   clearOverlay = false,

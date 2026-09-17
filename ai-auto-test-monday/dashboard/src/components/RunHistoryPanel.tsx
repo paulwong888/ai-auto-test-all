@@ -14,6 +14,7 @@ export interface RunHistoryRecord {
 interface Props {
   projectId: string;
   activeRunId: string | null;
+  refreshToken?: number;
   onSelect: (runId: string) => void;
 }
 
@@ -25,7 +26,12 @@ function formatTime(iso: string): string {
   }
 }
 
-export function RunHistoryPanel({ projectId, activeRunId, onSelect }: Props) {
+export function RunHistoryPanel({
+  projectId,
+  activeRunId,
+  refreshToken = 0,
+  onSelect,
+}: Props) {
   const [runs, setRuns] = useState<RunHistoryRecord[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -40,7 +46,7 @@ export function RunHistoryPanel({ projectId, activeRunId, onSelect }: Props) {
       .then((data) => setRuns((data.runs ?? []) as RunHistoryRecord[]))
       .catch(() => setRuns([]))
       .finally(() => setLoading(false));
-  }, [projectId, activeRunId]);
+  }, [projectId, activeRunId, refreshToken]);
 
   if (!projectId) return null;
 

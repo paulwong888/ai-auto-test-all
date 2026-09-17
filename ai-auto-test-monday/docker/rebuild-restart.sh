@@ -19,4 +19,5 @@ fi
 
 echo "[rebuild-restart] Dashboard http://localhost:${DASHBOARD_PORT:-8040}"
 echo "[rebuild-restart] API       http://localhost:${API_PORT:-3010}/health"
+echo "[rebuild-restart] 多 worker: docker compose --env-file .env up -d --scale worker=3"
 echo "[rebuild-restart] 完成"

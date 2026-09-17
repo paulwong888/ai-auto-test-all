@@ -1,24 +1,27 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { createFsArtifactStore } from "@monday/agent-core";
 import { cleanupDownstreamArtifacts } from "./artifact-cleanup.js";
 
 describe("cleanupDownstreamArtifacts", () => {
   let root: string;
+  let prefix: string;
+  let store: ReturnType<typeof createFsArtifactStore>;
 
   beforeEach(async () => {
     root = await mkdtemp(path.join(os.tmpdir(), "artifact-cleanup-"));
-    await mkdir(path.join(root, "poms"), { recursive: true });
-    await mkdir(path.join(root, "tests"), { recursive: true });
-    await writeFile(path.join(root, "component-registry.json"), "{}");
-    await writeFile(path.join(root, "testid-injections.json"), "{}");
-    await writeFile(path.join(root, "locator-catalog.json"), "{}");
-    await writeFile(path.join(root, "journeys.json"), "{}");
-    await writeFile(path.join(root, "execution-report.json"), "{}");
-    await writeFile(path.join(root, "poms", "LoginPage.ts"), "export {}");
-    await writeFile(path.join(root, "tests", "login.spec.ts"), "test()");
+    prefix = "proj/run-1";
+    store = createFsArtifactStore(root);
+    await store.putText(prefix, "component-registry.json", "{}");
+    await store.putText(prefix, "testid-injections.json", "{}");
+    await store.putText(prefix, "locator-catalog.json", "{}");
+    await store.putText(prefix, "journeys.json", "{}");
+    await store.putText(prefix, "execution-report.json", "{}");
+    await store.putText(prefix, "poms/LoginPage.ts", "export {}");
+    await store.putText(prefix, "tests/login.spec.ts", "test()");
   });
 
   afterEach(async () => {
@@ -26,21 +29,21 @@ describe("cleanupDownstreamArtifacts", () => {
   });
 
   it("removes downstream artifacts from choreographer", async () => {
-    await cleanupDownstreamArtifacts(root, "choreographer");
-    const files = await readdir(root);
-    assert.ok(files.includes("journeys.json"));
-    assert.ok(!files.includes("execution-report.json"));
-    assert.ok(!files.includes("tests"));
+    await cleanupDownstreamArtifacts(store, prefix, "choreographer");
+    const keys = await store.listRelativeKeys(prefix);
+    assert.ok(keys.includes("journeys.json"));
+    assert.ok(!keys.includes("execution-report.json"));
+    assert.ok(!keys.some((k) => k.startsWith("tests/")));
   });
 
   it("removes journeys and below from setDesigner", async () => {
-    await cleanupDownstreamArtifacts(root, "setDesigner");
-    const files = await readdir(root);
-    assert.ok(files.includes("locator-catalog.json"));
-    assert.ok(!files.includes("journeys.json"));
-    assert.ok(!files.includes("execution-report.json"));
-    assert.ok(!files.includes("poms"));
-    assert.ok(!files.includes("tests"));
+    await cleanupDownstreamArtifacts(store, prefix, "setDesigner");
+    const keys = await store.listRelativeKeys(prefix);
+    assert.ok(keys.includes("locator-catalog.json"));
+    assert.ok(!keys.includes("journeys.json"));
+    assert.ok(!keys.includes("execution-report.json"));
+    assert.ok(!keys.some((k) => k.startsWith("poms/")));
+    assert.ok(!keys.some((k) => k.startsWith("tests/")));
   });
 });
 

@@ -1,6 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mergeExecuteProgress } from "./pipeline-progress.js";
+import {
+  coerceActiveRunProgress,
+  mergeExecuteProgress,
+} from "./pipeline-progress.js";
 import type { PipelineProgress } from "@monday/agent-core/workflow";
 
 const baseRun = {
@@ -99,6 +102,52 @@ describe("mergeExecuteProgress", () => {
     const merged = mergeExecuteProgress(null, execProgress, run);
     assert.equal(merged?.status, "failed");
     assert.equal(merged?.currentAgent, null);
+  });
+
+  it("coerces running progress when DB run is active but workflow query is completed", () => {
+    const stale: PipelineProgress = {
+      projectId: "demo",
+      runId: "run-1",
+      status: "completed",
+      currentAgent: null,
+      completedAgents: [
+        "scriptAnalyst",
+        "stageManager",
+        "blockingCoach",
+        "setDesigner",
+        "choreographer",
+        "assistantDirector",
+        "continuityLead",
+      ],
+      artifactRoot: "/data/artifacts/demo/run-1",
+      executeAfterGenerate: true,
+    };
+
+    const run = {
+      ...baseRun,
+      status: "running",
+      current_agent: "assistantDirector",
+      execution_status: null,
+      finished_at: null,
+    };
+
+    const coerced = coerceActiveRunProgress(run, stale);
+    assert.equal(coerced?.status, "running");
+    assert.equal(coerced?.currentAgent, "assistantDirector");
+    assert.ok(!coerced?.completedAgents.includes("assistantDirector"));
+  });
+
+  it("coerces continuityLead running when execution_status is running", () => {
+    const run = {
+      ...baseRun,
+      status: "completed",
+      execution_status: "running",
+      finished_at: "2026-09-14T09:00:00.000Z",
+    };
+
+    const coerced = coerceActiveRunProgress(run, null);
+    assert.equal(coerced?.status, "running");
+    assert.equal(coerced?.currentAgent, "continuityLead");
   });
 
   it("returns failed when execution_status is failed and mainProgress completed", () => {

@@ -1,80 +1,25 @@
 import { Router } from "express";
-import { readFile, readdir } from "node:fs/promises";
-import path from "node:path";
 import {
   executePipelineSchema,
   resumePipelineSchema,
   runPipelineSchema,
 } from "@monday/agent-core";
+import { runArtifactPrefix } from "../lib/artifact-store.js";
+import {
+  getArtifactText,
+  getPomCatalog,
+  putJourneysArtifact,
+} from "../services/journeys-artifact-service.js";
 import {
   cancelPipeline,
   executePipelineRun,
   getPipelineRun,
+  listArtifactFilesFromStore,
   listArtifactsFromIndex,
   listRuns,
   resumePipelineRun,
   startPipeline,
 } from "../services/pipeline-service.js";
-
-const ARTIFACT_FILES: Record<string, string> = {
-  registry: "component-registry.json",
-  injections: "testid-injections.json",
-  locators: "locator-catalog.json",
-  journeys: "journeys.json",
-  "execution-report": "execution-report.json",
-  "apply-report": "apply-report.json",
-};
-
-const ARTIFACT_TEXT_FILES: Record<string, string> = {};
-
-function isEnoent(err: unknown): boolean {
-  return (
-    err instanceof Error &&
-    "code" in err &&
-    (err as NodeJS.ErrnoException).code === "ENOENT"
-  );
-}
-
-async function listArtifactFiles(artifactRoot: string): Promise<
-  Array<{ key: string; label: string; kind: "json" | "text" }>
-> {
-  const items: Array<{ key: string; label: string; kind: "json" | "text" }> = [
-    { key: "registry", label: "component-registry.json", kind: "json" },
-    { key: "injections", label: "testid-injections.json", kind: "json" },
-    { key: "locators", label: "locator-catalog.json", kind: "json" },
-    { key: "journeys", label: "journeys.json", kind: "json" },
-  ];
-
-  const pomDir = path.join(artifactRoot, "poms");
-  try {
-    const poms = await readdir(pomDir);
-    for (const file of poms.filter((f) => f.endsWith(".ts")).sort()) {
-      items.push({
-        key: `pom-${file}`,
-        label: `poms/${file}`,
-        kind: "text",
-      });
-    }
-  } catch {
-    // no poms yet
-  }
-
-  const testsDir = path.join(artifactRoot, "tests");
-  try {
-    const specs = await readdir(testsDir);
-    for (const file of specs.filter((f) => f.endsWith(".spec.ts")).sort()) {
-      items.push({
-        key: `spec-${file}`,
-        label: `tests/${file}`,
-        kind: "text",
-      });
-    }
-  } catch {
-    // no tests yet
-  }
-
-  return items;
-}
 
 export function createPipelineRouter(): Router {
   const router = Router();
@@ -94,7 +39,11 @@ export function createPipelineRouter(): Router {
       res.status(202).json({ ok: true, ...result });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const status = message.includes("not ready") ? 400 : 500;
+      const status = message.includes("not ready")
+        ? 400
+        : message.includes("already has a running")
+          ? 409
+          : 500;
       res.status(status).json({ ok: false, error: message });
     }
   });
@@ -147,6 +96,7 @@ export function createPipelineRouter(): Router {
         ? 404
         : message.includes("not ready") ||
             message.includes("already in progress") ||
+            message.includes("already has a running") ||
             message.includes("No generated spec") ||
             message.includes("Unknown journeyIds")
           ? 409
@@ -174,8 +124,43 @@ export function createPipelineRouter(): Router {
       const status = message.includes("not found")
         ? 404
         : message.includes("already in progress") ||
+            message.includes("already has a running") ||
             message.includes("Invalid fromAgent") ||
-            message.includes("Artifact root not found")
+            message.includes("Artifact prefix not found")
+          ? 409
+          : 500;
+      res.status(status).json({ ok: false, error: message });
+    }
+  });
+
+  router.get("/runs/:runId/pom-catalog", async (req, res) => {
+    try {
+      const catalog = await getPomCatalog(req.params.runId);
+      res.json({ ok: true, ...catalog });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(message.includes("not found") ? 404 : 500).json({
+        ok: false,
+        error: message,
+      });
+    }
+  });
+
+  router.put("/runs/:runId/artifacts/journeys", async (req, res) => {
+    try {
+      const result = await putJourneysArtifact(req.params.runId, req.body);
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = message.includes("not found")
+        ? 404
+        : message.includes("active") ||
+            message.includes("not found for this run") ||
+            message.includes("invalid") ||
+            message.includes("unknown") ||
+            message.includes("Duplicate") ||
+            message.includes("empty") ||
+            message.includes("no steps")
           ? 409
           : 500;
       res.status(status).json({ ok: false, error: message });
@@ -185,8 +170,8 @@ export function createPipelineRouter(): Router {
   router.get("/runs/:runId/artifacts/list", async (req, res) => {
     try {
       const { run } = await getPipelineRun(req.params.runId);
-      const artifactRoot = String(run.artifact_root);
-      const indexed = await listArtifactsFromIndex(req.params.runId, artifactRoot);
+      const prefix = runArtifactPrefix(run);
+      const indexed = await listArtifactsFromIndex(req.params.runId, prefix);
       const files =
         indexed.length > 0
           ? indexed.map((f) => ({
@@ -197,11 +182,15 @@ export function createPipelineRouter(): Router {
               summary: f.summary,
               available: f.available,
             }))
-          : (await listArtifactFiles(artifactRoot)).map((f) => ({
+          : (await listArtifactFilesFromStore(prefix)).map((f) => ({
               ...f,
               available: true,
             }));
-      res.json({ ok: true, files, source: indexed.length > 0 ? "index" : "filesystem" });
+      res.json({
+        ok: true,
+        files,
+        source: indexed.length > 0 ? "index" : "store",
+      });
     } catch (err) {
       res.status(404).json({
         ok: false,
@@ -213,41 +202,8 @@ export function createPipelineRouter(): Router {
   router.get("/runs/:runId/artifacts/:name", async (req, res) => {
     try {
       const { run } = await getPipelineRun(req.params.runId);
-      const artifactRoot = String(run.artifact_root);
-      const name = req.params.name;
-
-      if (name.startsWith("pom-")) {
-        const fileName = name.slice(4);
-        const filePath = path.join(artifactRoot, "poms", fileName);
-        const content = await readFile(filePath, "utf8");
-        res.type("text/plain").send(content);
-        return;
-      }
-
-      if (name.startsWith("spec-")) {
-        const fileName = name.slice(5);
-        const filePath = path.join(artifactRoot, "tests", fileName);
-        const content = await readFile(filePath, "utf8");
-        res.type("text/plain").send(content);
-        return;
-      }
-
-      const textRel = ARTIFACT_TEXT_FILES[name];
-      if (textRel) {
-        const content = await readFile(path.join(artifactRoot, textRel), "utf8");
-        res.type("text/plain").send(content);
-        return;
-      }
-
-      const file = ARTIFACT_FILES[name];
-      if (!file) {
-        res.status(404).json({ ok: false, error: "unknown artifact name" });
-        return;
-      }
-      const content = await readFile(path.join(artifactRoot, file), "utf8");
-      res.type("application/json").send(content);
-    } catch (err) {
-      if (isEnoent(err)) {
+      const result = await getArtifactText(run, req.params.name);
+      if (!result) {
         res.status(404).json({
           ok: false,
           code: "ARTIFACT_NOT_READY",
@@ -255,6 +211,8 @@ export function createPipelineRouter(): Router {
         });
         return;
       }
+      res.type(result.contentType).send(result.content);
+    } catch (err) {
       res.status(404).json({
         ok: false,
         error: err instanceof Error ? err.message : String(err),

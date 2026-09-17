@@ -10,7 +10,14 @@ const PROGRESS_LOG_INTERVAL_MS = 30_000;
 const PROGRESS_LOG_CHAR_STEP = 64 * 1024;
 
 export class HigressClient {
-  constructor(private readonly config: LlmConfig) {}
+  private readonly logTag: string;
+
+  constructor(
+    private readonly config: LlmConfig,
+    nodeName?: string,
+  ) {
+    this.logTag = nodeName ? `[${nodeName}-llm]` : "[llm]";
+  }
 
   async chatJson<T>(
     system: string,
@@ -20,7 +27,7 @@ export class HigressClient {
     try {
       return await this.chatJsonOrThrow(system, user, schema);
     } catch (err) {
-      console.warn("[llm] chatJson failed, using fallback:", err);
+      console.warn(`${this.logTag} chatJson failed, using fallback:`, err);
       return null;
     }
   }
@@ -135,7 +142,7 @@ export class HigressClient {
       );
     }, this.config.timeoutMs);
 
-    console.info(`[llm] stream started model=${this.config.model}`);
+    console.info(`${this.logTag} stream started model=${this.config.model}`);
     resetChunkIdleTimer();
 
     try {
@@ -168,7 +175,7 @@ export class HigressClient {
 
       const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
       console.info(
-        `[llm] stream done chars=${content.length} elapsed=${elapsedSec}s`,
+        `${this.logTag} stream done chars=${content.length} elapsed=${elapsedSec}s`,
       );
       return content;
     } catch (err) {
@@ -207,7 +214,7 @@ export class HigressClient {
         charGrowth >= PROGRESS_LOG_CHAR_STEP
       ) {
         console.info(
-          `[llm] stream progress chars=${contentBuffer.length} elapsed=${elapsedSec}s`,
+          `${this.logTag} stream progress chars=${contentBuffer.length} elapsed=${elapsedSec}s`,
         );
         lastProgressLogAt = now;
         lastProgressLogChars = contentBuffer.length;
@@ -227,7 +234,7 @@ export class HigressClient {
           const line = lineBuffer.slice(0, newlineIdx).trim();
           lineBuffer = lineBuffer.slice(newlineIdx + 1);
 
-          const delta = parseSseContentDelta(line);
+          const delta = parseSseContentDelta(line, this.logTag);
           if (delta) {
             if (!firstChunkLogged) {
               firstChunkLogged = true;
@@ -235,7 +242,7 @@ export class HigressClient {
                 (Date.now() - hooks.startedAt) /
                 1000
               ).toFixed(1);
-              console.info(`[llm] stream first chunk (+${elapsedSec}s)`);
+              console.info(`${this.logTag} stream first chunk (+${elapsedSec}s)`);
             }
             contentBuffer += delta;
             hooks.onContentDelta();
@@ -248,7 +255,7 @@ export class HigressClient {
 
       const trailing = lineBuffer.trim();
       if (trailing) {
-        const delta = parseSseContentDelta(trailing);
+        const delta = parseSseContentDelta(trailing, this.logTag);
         if (delta) contentBuffer += delta;
       }
     } finally {
@@ -259,7 +266,7 @@ export class HigressClient {
   }
 }
 
-function parseSseContentDelta(line: string): string {
+function parseSseContentDelta(line: string, logTag: string): string {
   if (!line.startsWith("data:")) return "";
   const payload = line.slice("data:".length).trim();
   if (!payload || payload === "[DONE]") return "";
@@ -274,7 +281,10 @@ function parseSseContentDelta(line: string): string {
     const choice = data.choices?.[0];
     return choice?.delta?.content ?? choice?.message?.content ?? "";
   } catch {
-    console.warn("[llm] stream skipped unparseable SSE line:", payload.slice(0, 80));
+    console.warn(
+      `${logTag} stream skipped unparseable SSE line:`,
+      payload.slice(0, 80),
+    );
     return "";
   }
 }

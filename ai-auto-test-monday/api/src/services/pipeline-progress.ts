@@ -5,6 +5,63 @@ export const GENERATION_AGENTS = AGENT_IDS.filter(
   (id) => id !== "continuityLead",
 ) as AgentId[];
 
+export function agentsBefore(fromAgent: string | null): AgentId[] {
+  if (!fromAgent) return [];
+  const idx = AGENT_IDS.indexOf(fromAgent as AgentId);
+  return idx <= 0 ? [] : AGENT_IDS.slice(0, idx);
+}
+
+/** When DB says the run is active but workflow query is stale/terminal, synthesize running progress. */
+export function coerceActiveRunProgress(
+  run: Record<string, unknown>,
+  progress: PipelineProgress | null,
+): PipelineProgress | null {
+  const runStatus = String(run.status);
+  const execStatus = run.execution_status as string | null | undefined;
+  const dbRunActive = runStatus === "running";
+  const execRunning = execStatus === "running";
+
+  if (!dbRunActive && !execRunning) {
+    return progress;
+  }
+  if (progress?.status === "running") {
+    return progress;
+  }
+
+  const artifactRoot = String(run.artifact_root);
+  const base = {
+    projectId: String(run.project_id),
+    runId: String(run.id),
+    artifactRoot,
+    executeAfterGenerate:
+      progress?.executeAfterGenerate ??
+      (run.execute_after_generate as boolean | null) ??
+      true,
+    skippedAgents: progress?.skippedAgents ?? [],
+  };
+
+  if (execRunning) {
+    return {
+      ...base,
+      status: "running",
+      currentAgent: "continuityLead",
+      completedAgents: [...GENERATION_AGENTS],
+    };
+  }
+
+  const currentAgent =
+    (run.current_agent as string | null) ?? progress?.currentAgent ?? null;
+  return {
+    ...base,
+    status: "running",
+    currentAgent: currentAgent as AgentId | null,
+    completedAgents:
+      progress?.completedAgents?.length && progress.status !== "completed"
+        ? progress.completedAgents
+        : agentsBefore(currentAgent),
+  };
+}
+
 export function isGenerationFinished(run: Record<string, unknown>): boolean {
   return run.finished_at != null || run.status === "completed";
 }

@@ -8,10 +8,14 @@ import {
 } from "react";
 import {
   ArtifactPreview,
+  CodePreview,
   previewMetaForArtifact,
 } from "./components/ArtifactPreview";
+import { JourneyEditorPanel } from "./components/JourneyEditorPanel";
+import { Modal } from "./components/Modal";
 import { ProjectPanel, type ProjectRecord } from "./components/ProjectPanel";
 import { RunHistoryPanel } from "./components/RunHistoryPanel";
+import type { JourneysDocument } from "./types";
 import { usePipelineWebSocket } from "./hooks/usePipelineWebSocket";
 import {
   mergePipelineProgress,
@@ -27,6 +31,14 @@ const AGENTS = [
   { id: "assistantDirector", label: "Assistant Director" },
   { id: "continuityLead", label: "Continuity Lead" },
 ];
+
+const AGENT_ORDER = AGENTS.map((a) => a.id);
+const GENERATION_AGENTS = AGENT_ORDER.filter((id) => id !== "continuityLead");
+
+function agentsBefore(fromAgent: string): string[] {
+  const idx = AGENT_ORDER.indexOf(fromAgent);
+  return idx <= 0 ? [] : AGENT_ORDER.slice(0, idx);
+}
 
 const BASE_ARTIFACT_LINKS = [
   { key: "registry", label: "component-registry.json", agent: "scriptAnalyst" },
@@ -173,7 +185,11 @@ export default function App() {
     key: string;
     content: string;
   } | null>(null);
+  const [journeyEditMode, setJourneyEditMode] = useState(false);
+  const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
   const previewScrollRef = useRef<HTMLDivElement>(null);
+  const activeRunRef = useRef<RunRecord | null>(null);
+  activeRunRef.current = activeRun;
   const urlHydratedRef = useRef(false);
 
   const clearRunViewState = useCallback(() => {
@@ -185,6 +201,7 @@ export default function App() {
     setActiveArtifactKey(null);
     setPreviewError(null);
     setJourneySpecOverlay(null);
+    setJourneyEditMode(false);
     setArtifactLinks([...BASE_ARTIFACT_LINKS]);
     setLoading(false);
     setExecutingOnly(false);
@@ -248,6 +265,7 @@ export default function App() {
     const text = await res.text();
     setPreviewError(null);
     setJourneySpecOverlay(null);
+    if (name !== "journeys") setJourneyEditMode(false);
     setActiveArtifactKey(name);
     setPreview(text);
     setPreviewMeta(previewMetaForArtifact(name, text));
@@ -295,28 +313,63 @@ export default function App() {
     [runId, loadArtifact, loadArtifactList],
   );
 
+  const onRunTerminal = useCallback(
+    async (
+      id: string,
+      progressStatus: string,
+      execStatus?: string | null,
+    ) => {
+      try {
+        const res = await fetch(`/api/pipeline/runs/${id}`, {
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (data.run) {
+          setActiveRun({
+            status: String(data.run.status),
+            execution_status: data.run.execution_status as
+              | string
+              | null
+              | undefined,
+          });
+        }
+      } catch {
+        const terminalStatus =
+          progressStatus === "failed"
+            ? "failed"
+            : progressStatus === "cancelled"
+              ? "cancelled"
+              : "completed";
+        setActiveRun((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: terminalStatus,
+                execution_status: execStatus ?? prev.execution_status,
+              }
+            : prev,
+        );
+      }
+      setHistoryRefreshToken((t) => t + 1);
+      void finalizeRunTerminal(id, progressStatus, execStatus);
+    },
+    [finalizeRunTerminal],
+  );
+
   const handleExecutionFinished = useCallback(
     (status: "completed" | "failed") => {
-      setActiveRun((prev) =>
-        prev ? { ...prev, execution_status: status } : prev,
-      );
       if (runId) {
-        void finalizeRunTerminal(runId, status, status);
+        void onRunTerminal(runId, status, status);
       }
     },
-    [runId, finalizeRunTerminal],
+    [runId, onRunTerminal],
   );
 
   const handleRunCancelled = useCallback(() => {
-    setActiveRun((prev) =>
-      prev
-        ? { ...prev, status: "cancelled", execution_status: null }
-        : prev,
-    );
     if (runId) {
-      void finalizeRunTerminal(runId, "cancelled");
+      void onRunTerminal(runId, "cancelled");
     }
-  }, [runId, finalizeRunTerminal]);
+  }, [runId, onRunTerminal]);
 
   const onRunSnapshot = useCallback(
     (
@@ -327,26 +380,36 @@ export default function App() {
         status: run.status,
         execution_status: run.execution_status,
       });
+      const execRunning = run.execution_status === "running";
+      const dbRunActive = run.status === "running" || execRunning;
+      const snapshotTerminal =
+        snapshotProgress != null &&
+        ["completed", "failed", "cancelled"].includes(snapshotProgress.status);
+
       if (snapshotProgress) {
-        setProgress((prev) => mergePipelineProgress(snapshotProgress, prev));
+        if (dbRunActive && snapshotTerminal) {
+          // Stale main-workflow snapshot during resume/re-execute — keep optimistic progress.
+        } else if (dbRunActive || snapshotProgress.status === "running") {
+          setProgress(snapshotProgress);
+        } else {
+          setProgress((prev) => mergePipelineProgress(snapshotProgress, prev));
+        }
       }
-      const progressStatus = snapshotProgress?.status ?? run.status;
+
+      const progressStatus = dbRunActive
+        ? "running"
+        : snapshotProgress?.status ?? run.status;
       const terminal = ["completed", "failed", "cancelled"].includes(
         progressStatus,
       );
-      const execRunning = run.execution_status === "running";
-      const runActive =
-        execRunning ||
-        run.status === "running" ||
-        snapshotProgress?.status === "running";
-      if (runActive && !terminal) {
+      if (dbRunActive || snapshotProgress?.status === "running") {
         if (execRunning) setExecutingOnly(true);
         setLoading(true);
-      } else if (terminal && runId) {
-        void finalizeRunTerminal(runId, progressStatus, run.execution_status);
+      } else if (terminal && !dbRunActive && runId) {
+        void onRunTerminal(runId, progressStatus, run.execution_status);
       }
     },
-    [runId, finalizeRunTerminal],
+    [runId, onRunTerminal],
   );
 
   const { connected: wsConnected, progress: wsProgress } = usePipelineWebSocket(
@@ -364,7 +427,7 @@ export default function App() {
 
   useEffect(() => {
     if (!wsProgress) return;
-    setProgress((prev) => mergePipelineProgress(prev, wsProgress));
+    setProgress((prev) => mergePipelineProgress(wsProgress, prev));
     if (wsProgress.currentAgent === "continuityLead") {
       setActiveRun((prev) =>
         prev ? { ...prev, execution_status: "running" } : prev,
@@ -376,17 +439,21 @@ export default function App() {
       wsProgress.status === "cancelled"
     ) {
       if (runId) {
-        void finalizeRunTerminal(
+        void onRunTerminal(
           runId,
           wsProgress.status,
-          wsProgress.status === "failed" ? "failed" : undefined,
+          wsProgress.status === "failed"
+            ? "failed"
+            : wsProgress.status === "completed"
+              ? "completed"
+              : undefined,
         );
       } else {
         setLoading(false);
         setExecutingOnly(false);
       }
     }
-  }, [wsProgress, runId, finalizeRunTerminal]);
+  }, [wsProgress, runId, onRunTerminal]);
 
   const availableSpecKeys = useMemo(
     () =>
@@ -430,9 +497,6 @@ export default function App() {
       );
       const text = await res.text();
       setJourneySpecOverlay({ key: specKey, content: text });
-      requestAnimationFrame(() => {
-        previewScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-      });
     },
     [runId],
   );
@@ -570,6 +634,13 @@ export default function App() {
         status: prev?.status ?? "completed",
         execution_status: "running",
       }));
+      setProgress((prev) => ({
+        status: "running",
+        currentAgent: "continuityLead",
+        completedAgents: GENERATION_AGENTS,
+        artifactRoot: prev?.artifactRoot,
+        executeAfterGenerate: true,
+      }));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setLoading(false);
@@ -621,6 +692,14 @@ export default function App() {
         status: "running",
         execution_status:
           fromAgent === "continuityLead" ? "running" : prev?.execution_status,
+      }));
+      setProgress((prev) => ({
+        status: "running",
+        currentAgent: fromAgent,
+        completedAgents: agentsBefore(fromAgent),
+        artifactRoot: prev?.artifactRoot,
+        executeAfterGenerate:
+          fromAgent === "continuityLead" ? true : executeAfterGenerate,
       }));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -680,12 +759,7 @@ export default function App() {
       setProgress((prev) =>
         prev ? { ...prev, status: "cancelled", currentAgent: null } : prev,
       );
-      setActiveRun((prev) =>
-        prev
-          ? { ...prev, status: "cancelled", execution_status: null }
-          : prev,
-      );
-      if (runId) void finalizeRunTerminal(runId, "cancelled");
+      void onRunTerminal(runId, "cancelled");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -702,6 +776,26 @@ export default function App() {
     activeArtifactKey !== "journeys" &&
     activeArtifactKey !== null &&
     activeArtifactKey !== "execution-report";
+  const runActive =
+    activeRun?.status === "running" ||
+    progress?.status === "running" ||
+    executionStatus === "running";
+  const canEditJourneys =
+    !!runId &&
+    hasJourneysArtifact &&
+    activeArtifactKey === "journeys" &&
+    !runActive &&
+    !loading;
+
+  const journeysDocForEdit = useMemo((): JourneysDocument | null => {
+    if (activeArtifactKey !== "journeys" || !preview) return null;
+    try {
+      const doc = JSON.parse(preview) as JourneysDocument;
+      return doc?.journeys ? doc : null;
+    } catch {
+      return null;
+    }
+  }, [activeArtifactKey, preview]);
 
   function stepStatus(
     agentId: string,
@@ -953,6 +1047,7 @@ export default function App() {
         <RunHistoryPanel
           projectId={projectId}
           activeRunId={runId}
+          refreshToken={historyRefreshToken}
           onSelect={(id) => void loadHistoricalRun(id)}
         />
 
@@ -1060,18 +1155,31 @@ export default function App() {
               renderLink={renderLink}
             />
           </div>
-          {showPreviewBack && (
+          {(showPreviewBack || canEditJourneys) && (
             <div className="preview-nav">
-              <button
-                type="button"
-                className="preview-back"
-                onClick={() => void loadArtifact("journeys")}
-              >
-                ← 返回 journeys
-              </button>
-              <span className="muted preview-nav-hint">
-                或点击上方「journeys.json」
-              </span>
+              {showPreviewBack && (
+                <>
+                  <button
+                    type="button"
+                    className="preview-back"
+                    onClick={() => void loadArtifact("journeys")}
+                  >
+                    ← 返回 journeys
+                  </button>
+                  <span className="muted preview-nav-hint">
+                    或点击上方「journeys.json」
+                  </span>
+                </>
+              )}
+              {canEditJourneys && !journeyEditMode && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setJourneyEditMode(true)}
+                >
+                  编辑 journeys
+                </button>
+              )}
             </div>
           )}
           <div className="layout-preview" ref={previewScrollRef}>
@@ -1086,8 +1194,6 @@ export default function App() {
                   artifactKey={activeArtifactKey}
                   content={preview}
                   availableSpecKeys={availableSpecKeys}
-                  journeySpecOverlay={journeySpecOverlay}
-                  onCloseJourneySpec={() => setJourneySpecOverlay(null)}
                   onViewSpec={(key) => void loadJourneySpecOverlay(key)}
                   onRetryJourneys={(ids) => void runExecuteJourneys(ids)}
                   retryDisabled={loading}
@@ -1102,6 +1208,52 @@ export default function App() {
           </div>
         </section>
       </div>
+
+      <Modal
+        open={!!journeySpecOverlay}
+        title={
+          journeySpecOverlay
+            ? `${journeySpecOverlay.key.replace(/^spec-/, "tests/")}.spec.ts`
+            : "Playwright Spec"
+        }
+        onClose={() => setJourneySpecOverlay(null)}
+      >
+        {journeySpecOverlay && (
+          <CodePreview
+            content={journeySpecOverlay.content}
+            language="Playwright Spec"
+          />
+        )}
+      </Modal>
+
+      <Modal
+        open={
+          journeyEditMode &&
+          activeArtifactKey === "journeys" &&
+          !!runId &&
+          !!journeysDocForEdit
+        }
+        title="编辑 journeys"
+        wide
+        onClose={() => setJourneyEditMode(false)}
+      >
+        {runId && journeysDocForEdit && (
+          <JourneyEditorPanel
+            runId={runId}
+            initialDoc={journeysDocForEdit}
+            onCancel={() => setJourneyEditMode(false)}
+            onSaved={(saved) => {
+              const text = JSON.stringify(saved, null, 2);
+              setPreview(text);
+              setPreviewMeta(previewMetaForArtifact("journeys", text));
+            }}
+            onResumeFromAssistantDirector={() => {
+              setJourneyEditMode(false);
+              void runResumeFromAgent("assistantDirector");
+            }}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

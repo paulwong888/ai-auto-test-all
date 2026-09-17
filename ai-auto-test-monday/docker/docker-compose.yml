@@ -52,6 +52,38 @@ services:
     networks:
       - monday-net
 
+  minio:
+    image: quay.io/minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "0.0.0.0:${MINIO_API_PORT:-9000}:9000"
+      - "0.0.0.0:${MINIO_CONSOLE_PORT:-9001}:9001"
+    networks:
+      - monday-net
+      
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      - minio
+    networks:
+      - monday-net
+    restart: "no"
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 $${MINIO_ACCESS_KEY} $${MINIO_SECRET_KEY} 2>/dev/null; do sleep 2; done;
+      mc mb --ignore-existing local/$${MINIO_BUCKET};
+      exit 0;
+      "
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-monday-artifacts}
+
   api:
     build:
       context: ..
@@ -64,6 +96,11 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       REDIS_URL: redis://redis:6379
       ARTIFACTS_BASE_DIR: /data/artifacts
+      ARTIFACT_STORE: ${ARTIFACT_STORE:-minio}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+      MINIO_BUCKET: ${MINIO_BUCKET:-monday-artifacts}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       REPOS_BASE_DIR: /data/repos
       POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
       POSTGRES_PORT: ${POSTGRES_PORT:-5433}
@@ -82,8 +119,12 @@ services:
     ports:
       - "0.0.0.0:${API_PORT:-3010}:3010"
     depends_on:
-      - temporal
-      - redis
+      temporal:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     networks:
       - monday-net
     healthcheck:
@@ -103,6 +144,11 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       REDIS_URL: redis://redis:6379
       ARTIFACTS_BASE_DIR: /data/artifacts
+      ARTIFACT_STORE: ${ARTIFACT_STORE:-minio}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+      MINIO_BUCKET: ${MINIO_BUCKET:-monday-artifacts}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       REPOS_BASE_DIR: /data/repos
       HIGRESS_BASE_URL: ${HIGRESS_BASE_URL:-http://host.docker.internal:8004/v1}
       HIGRESS_API_KEY: ${HIGRESS_API_KEY:-not-needed}
@@ -132,7 +178,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./data/artifacts:/data/artifacts
       - ./data/repos:/data/repos
       - ${EXTERNAL_REPOS_HOST_PATH:-./data/repos/external}:${EXTERNAL_REPOS_CONTAINER_PATH:-/data/repos/external}
       - ${SANDBOX_REPOS_HOST_PATH:-../../ai-auto-test-platform/sandbox-repos}:${SANDBOX_REPOS_CONTAINER_PATH:-/data/repos/sandbox}
@@ -142,6 +187,8 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     networks:
       - monday-net
     restart: unless-stopped
@@ -164,3 +211,4 @@ networks:
 
 volumes:
   temporal_pg_data:
+  minio_data:

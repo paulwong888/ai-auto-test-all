@@ -5,9 +5,15 @@ export interface ParsedGherkinStep {
   text: string;
 }
 
+export type JourneyAction =
+  | "navigate"
+  | "assert_visible"
+  | "interact"
+  | "assert_state";
+
 export interface JourneyStep {
   step: number;
-  action: string;
+  action: JourneyAction;
   pom: string;
   method: string;
   description?: string;

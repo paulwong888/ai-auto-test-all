@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Context } from "@temporalio/activity";
 import type { PipelineInput } from "@monday/agent-core/workflow";
+import { toRelativeArtifactKey } from "@monday/agent-core";
 import {
   runScriptAnalyst,
   runStageManager,
@@ -21,8 +22,10 @@ import {
   type JourneysDocument,
 } from "@monday/agent-core";
 import { publishProgress } from "../lib/redis.js";
+import { withArtifactStaging, runArtifactPrefix } from "../lib/artifact-staging.js";
 import {
   clearRunCurrentAgent,
+  finalizeRunStatus,
   insertArtifactIndex,
   updateExecutionStatus,
 } from "../lib/db.js";
@@ -34,6 +37,10 @@ async function ensureDir(dir: string): Promise<void> {
 async function writeJson(filePath: string, data: unknown): Promise<void> {
   await ensureDir(path.dirname(filePath));
   await writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+}
+
+function relKey(input: PipelineInput, filePath: string): string {
+  return toRelativeArtifactKey(filePath, runArtifactPrefix(input));
 }
 
 function throwIfCancelled(): void {
@@ -66,7 +73,7 @@ async function readInjections(root: string): Promise<TestIdInjections> {
   return JSON.parse(raw) as TestIdInjections;
 }
 
-export async function scriptAnalyst(input: PipelineInput): Promise<void> {
+async function scriptAnalystImpl(input: PipelineInput): Promise<void> {
   throwIfCancelled();
   await notify(input, "scriptAnalyst", "started");
 
@@ -78,7 +85,7 @@ export async function scriptAnalyst(input: PipelineInput): Promise<void> {
 
   const out = path.join(input.artifactRoot, "component-registry.json");
   await writeJson(out, registry);
-  await insertArtifactIndex(input.runId, "scriptAnalyst", "registry", out, {
+  await insertArtifactIndex(input.runId, "scriptAnalyst", "registry", relKey(input, out), {
     componentCount: registry.components.length,
   });
 
@@ -86,7 +93,11 @@ export async function scriptAnalyst(input: PipelineInput): Promise<void> {
   await notify(input, "scriptAnalyst", "completed");
 }
 
-export async function stageManager(input: PipelineInput): Promise<void> {
+export async function scriptAnalyst(input: PipelineInput): Promise<void> {
+  return withArtifactStaging(input, scriptAnalystImpl);
+}
+
+async function stageManagerImpl(input: PipelineInput): Promise<void> {
   throwIfCancelled();
   await notify(input, "stageManager", "started");
 
@@ -100,7 +111,7 @@ export async function stageManager(input: PipelineInput): Promise<void> {
 
   const out = path.join(input.artifactRoot, "testid-injections.json");
   await writeJson(out, injections);
-  await insertArtifactIndex(input.runId, "stageManager", "injections", out, {
+  await insertArtifactIndex(input.runId, "stageManager", "injections", relKey(input, out), {
     patchCount: injections.patches.length,
     dryRun: injections.dryRun,
   });
@@ -113,7 +124,7 @@ export async function stageManager(input: PipelineInput): Promise<void> {
     );
     const reportPath = path.join(input.artifactRoot, "apply-report.json");
     await writeJson(reportPath, report);
-    await insertArtifactIndex(input.runId, "stageManager", "apply-report", reportPath, {
+    await insertArtifactIndex(input.runId, "stageManager", "apply-report", relKey(input, reportPath), {
       applied: report.applied,
       failed: report.failed,
     });
@@ -123,7 +134,11 @@ export async function stageManager(input: PipelineInput): Promise<void> {
   await notify(input, "stageManager", "completed");
 }
 
-export async function blockingCoach(input: PipelineInput): Promise<void> {
+export async function stageManager(input: PipelineInput): Promise<void> {
+  return withArtifactStaging(input, stageManagerImpl);
+}
+
+async function blockingCoachImpl(input: PipelineInput): Promise<void> {
   throwIfCancelled();
   await notify(input, "blockingCoach", "started");
 
@@ -133,7 +148,7 @@ export async function blockingCoach(input: PipelineInput): Promise<void> {
 
   const out = path.join(input.artifactRoot, "locator-catalog.json");
   await writeJson(out, catalog);
-  await insertArtifactIndex(input.runId, "blockingCoach", "locators", out, {
+  await insertArtifactIndex(input.runId, "blockingCoach", "locators", relKey(input, out), {
     locatorCount: catalog.locators.length,
   });
 
@@ -141,7 +156,11 @@ export async function blockingCoach(input: PipelineInput): Promise<void> {
   await notify(input, "blockingCoach", "completed");
 }
 
-export async function setDesigner(input: PipelineInput): Promise<void> {
+export async function blockingCoach(input: PipelineInput): Promise<void> {
+  return withArtifactStaging(input, blockingCoachImpl);
+}
+
+async function setDesignerImpl(input: PipelineInput): Promise<void> {
   throwIfCancelled();
   await notify(input, "setDesigner", "started");
 
@@ -152,7 +171,7 @@ export async function setDesigner(input: PipelineInput): Promise<void> {
   );
   const catalog = JSON.parse(catalogRaw) as LocatorCatalog;
 
-  let pomFiles = await runSetDesigner(registry, catalog);
+  const pomFiles = await runSetDesigner(registry, catalog);
   const pomDir = path.join(input.artifactRoot, "poms");
   await ensureDir(pomDir);
 
@@ -166,7 +185,7 @@ export async function setDesigner(input: PipelineInput): Promise<void> {
       input.runId,
       "setDesigner",
       "pom",
-      filePath,
+      relKey(input, filePath),
     );
   }
 
@@ -174,7 +193,11 @@ export async function setDesigner(input: PipelineInput): Promise<void> {
   await notify(input, "setDesigner", "completed");
 }
 
-export async function choreographer(input: PipelineInput): Promise<void> {
+export async function setDesigner(input: PipelineInput): Promise<void> {
+  return withArtifactStaging(input, setDesignerImpl);
+}
+
+async function choreographerImpl(input: PipelineInput): Promise<void> {
   throwIfCancelled();
   await notify(input, "choreographer", "started");
 
@@ -198,7 +221,7 @@ export async function choreographer(input: PipelineInput): Promise<void> {
 
     const out = path.join(input.artifactRoot, "journeys.json");
     await writeJson(out, doc);
-    await insertArtifactIndex(input.runId, "choreographer", "journeys", out, {
+    await insertArtifactIndex(input.runId, "choreographer", "journeys", relKey(input, out), {
       journeyCount: doc.journeys.length,
     });
 
@@ -216,7 +239,11 @@ export async function choreographer(input: PipelineInput): Promise<void> {
   }
 }
 
-export async function assistantDirector(input: PipelineInput): Promise<void> {
+export async function choreographer(input: PipelineInput): Promise<void> {
+  return withArtifactStaging(input, choreographerImpl);
+}
+
+async function assistantDirectorImpl(input: PipelineInput): Promise<void> {
   throwIfCancelled();
   await notify(input, "assistantDirector", "started");
 
@@ -266,13 +293,20 @@ export async function assistantDirector(input: PipelineInput): Promise<void> {
       input.runId,
       "assistantDirector",
       "spec",
-      filePath,
+      relKey(input, filePath),
       { journeyId: spec.journeyId },
     );
   }
 
   throwIfCancelled();
   await notify(input, "assistantDirector", "completed");
+  if (input.executeAfterGenerate === false) {
+    await finalizeRunStatus(input.runId, "completed");
+  }
+}
+
+export async function assistantDirector(input: PipelineInput): Promise<void> {
+  return withArtifactStaging(input, assistantDirectorImpl);
 }
 
 export interface ContinuityLeadResult {
@@ -281,7 +315,7 @@ export interface ContinuityLeadResult {
   total: number;
 }
 
-export async function continuityLead(
+async function continuityLeadImpl(
   input: PipelineInput,
 ): Promise<ContinuityLeadResult> {
   throwIfCancelled();
@@ -332,6 +366,7 @@ export async function continuityLead(
     if (error.includes("cancelled")) {
       await updateExecutionStatus(input.runId, null, input.executionMode);
       await clearRunCurrentAgent(input.runId);
+      await finalizeRunStatus(input.runId, "cancelled");
       await publishProgress(input.runId, {
         agent: "continuityLead",
         status: "cancelled",
@@ -357,7 +392,7 @@ export async function continuityLead(
       input.runId,
       "continuityLead",
       "execution-report",
-      out,
+      relKey(input, out),
       {
         passed: report.summary.passed,
         failed: report.summary.failed,
@@ -365,6 +400,7 @@ export async function continuityLead(
     );
     await updateExecutionStatus(input.runId, "failed", input.executionMode);
     await clearRunCurrentAgent(input.runId);
+    await finalizeRunStatus(input.runId, "failed", error);
     await publishProgress(input.runId, {
       agent: "continuityLead",
       status: "execution-failed",
@@ -380,22 +416,22 @@ export async function continuityLead(
   }
 
   await writeJson(out, report!);
-  await insertArtifactIndex(input.runId, "continuityLead", "execution-report", out, {
+  await insertArtifactIndex(input.runId, "continuityLead", "execution-report", relKey(input, out), {
     passed: report.summary.passed,
     failed: report.summary.failed,
   });
 
   throwIfCancelled();
-  await updateExecutionStatus(
-    input.runId,
-    report.summary.failed === 0 ? "completed" : "failed",
-    input.executionMode,
-  );
-  // Keep overlay_workflow_id: the overlay workflow remains the authoritative
-  // progress source for this run after completion (queryable while Temporal
-  // retention lasts); clearing it would regress the run view to the stale
-  // original workflow state.
+  const execStatus = report.summary.failed === 0 ? "completed" : "failed";
+  await updateExecutionStatus(input.runId, execStatus, input.executionMode);
   await clearRunCurrentAgent(input.runId);
+  await finalizeRunStatus(
+    input.runId,
+    execStatus,
+    report.summary.failed > 0
+      ? `${report.summary.failed} journey(s) failed`
+      : null,
+  );
   await notify(input, "continuityLead", "completed");
   await publishProgress(input.runId, {
     agent: "continuityLead",
@@ -417,4 +453,10 @@ export async function continuityLead(
     passed: report.summary.passed,
     total: report.summary.total,
   };
+}
+
+export async function continuityLead(
+  input: PipelineInput,
+): Promise<ContinuityLeadResult> {
+  return withArtifactStaging(input, continuityLeadImpl);
 }

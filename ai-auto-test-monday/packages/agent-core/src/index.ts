@@ -1,5 +1,6 @@
 export * from "./workflow.js";
 export * from "./paths.js";
+export * from "./artifact-store/index.js";
 export * from "./schemas.js";
 export * from "./types.js";
 export * from "./config.js";
@@ -23,4 +24,5 @@ export * from "./lib/pom-utils.js";
 export * from "./lib/pipeline-batch.js";
 export * from "./lib/e2e-auth.js";
 export * from "./lib/journey-normalize.js";
+export * from "./lib/journey-validate.js";
 export * from "./lib/merge-execution-report.js";

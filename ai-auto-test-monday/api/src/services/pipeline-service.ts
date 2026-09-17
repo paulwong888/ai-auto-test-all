@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access, readdir } from "node:fs/promises";
-import path from "node:path";
+import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import {
   Connection,
@@ -15,20 +14,25 @@ import {
   PROGRESS_QUERY,
   EXECUTE_PROGRESS_QUERY,
   AGENT_IDS,
-  artifactRoot as buildArtifactRoot,
+  artifactPrefix,
   resolveProjectPaths,
+  toRelativeArtifactKey,
 } from "@monday/agent-core";
 import type { AgentId, PipelineProgress } from "@monday/agent-core/workflow";
 import { config } from "../config.js";
 import { pool } from "../db/pool.js";
 import { getProject } from "./project-service.js";
 import type { E2eAuthConfig, Project } from "@monday/agent-core";
-import { mergeExecuteProgress } from "./pipeline-progress.js";
+import {
+  coerceActiveRunProgress,
+  mergeExecuteProgress,
+} from "./pipeline-progress.js";
 import { publishRunEvent } from "../ws/hub.js";
 import {
   cleanupDownstreamArtifacts,
   downstreamDeletesExecutionReport,
 } from "./artifact-cleanup.js";
+import { apiArtifactStore, runArtifactPrefix } from "../lib/artifact-store.js";
 
 let client: Client | null = null;
 
@@ -78,15 +82,186 @@ const GENERATION_ARTIFACT_FILES = [
   "journeys.json",
 ];
 
-async function hasGenerationArtifacts(artifactRoot: string): Promise<boolean> {
+async function hasGenerationArtifacts(prefix: string): Promise<boolean> {
+  const store = apiArtifactStore();
   for (const file of GENERATION_ARTIFACT_FILES) {
-    try {
-      await access(path.join(artifactRoot, file), constants.F_OK);
-    } catch {
-      return false;
-    }
+    if (!(await store.exists(prefix, file))) return false;
   }
   return true;
+}
+
+/** True when generation or execute-only phase is actively in progress. */
+export function isRunActivelyRunning(run: {
+  status: string;
+  execution_status?: string | null;
+}): boolean {
+  if (run.status === "running") return true;
+  return run.status === "completed" && run.execution_status === "running";
+}
+
+async function markStaleRunFailed(runId: string): Promise<void> {
+  await pool.query(
+    `UPDATE pipeline_runs SET
+      status = 'failed',
+      execution_status = NULL,
+      current_agent = NULL,
+      overlay_workflow_id = NULL,
+      finished_at = COALESCE(finished_at, NOW()),
+      error = COALESCE(error, 'stale run reconciled (workflow not running)')
+     WHERE id = $1`,
+    [runId],
+  );
+}
+
+async function markStaleRunCompleted(runId: string): Promise<void> {
+  await pool.query(
+    `UPDATE pipeline_runs SET
+      status = 'completed',
+      current_agent = NULL,
+      finished_at = COALESCE(finished_at, NOW())
+     WHERE id = $1`,
+    [runId],
+  );
+}
+
+async function getTemporalWorkflowStatus(
+  workflowId: string,
+): Promise<string | null> {
+  try {
+    const temporal = await getTemporalClient();
+    const desc = await temporal.workflow.getHandle(workflowId).describe();
+    return desc.status.name;
+  } catch {
+    return null;
+  }
+}
+
+/** Sync pipeline_runs.status from execution_status or merged progress. */
+export async function reconcileRunTerminalStatus(
+  runId: string,
+  run: Record<string, unknown>,
+  progress: PipelineProgress | null,
+): Promise<void> {
+  if (run.status !== "running") return;
+
+  const execStatus = run.execution_status as string | null;
+  if (execStatus === "completed") {
+    await pool.query(
+      `UPDATE pipeline_runs SET status = 'completed', current_agent = NULL, finished_at = COALESCE(finished_at, NOW()) WHERE id = $1`,
+      [runId],
+    );
+    return;
+  }
+  if (execStatus === "failed") {
+    await pool.query(
+      `UPDATE pipeline_runs SET status = 'failed', current_agent = NULL, finished_at = COALESCE(finished_at, NOW()) WHERE id = $1`,
+      [runId],
+    );
+    return;
+  }
+
+  const isExecutePhase = execStatus != null;
+  const resumeOverlayActive = Boolean(
+    run.overlay_workflow_id &&
+      String(run.overlay_workflow_id).startsWith("resume-"),
+  );
+
+  if (
+    progress?.status === "completed" &&
+    !isExecutePhase &&
+    !resumeOverlayActive
+  ) {
+    await pool.query(
+      `UPDATE pipeline_runs SET status = 'completed', current_agent = NULL, finished_at = COALESCE(finished_at, NOW()) WHERE id = $1`,
+      [runId],
+    );
+    return;
+  }
+
+  if (progress?.status === "failed" && !resumeOverlayActive) {
+    await pool.query(
+      `UPDATE pipeline_runs SET status = 'failed', current_agent = NULL, error = COALESCE(error, $2), finished_at = COALESCE(finished_at, NOW()) WHERE id = $1`,
+      [runId, progress.error ?? "workflow failed"],
+    );
+    return;
+  }
+
+  if (progress?.status === "cancelled") {
+    await pool.query(
+      `UPDATE pipeline_runs SET status = 'cancelled', current_agent = NULL, finished_at = COALESCE(finished_at, NOW()) WHERE id = $1`,
+      [runId],
+    );
+  }
+}
+
+/** Returns true if the run still blocks new pipelines after optional DB reconcile. */
+async function reconcileStaleRunIfNeeded(
+  run: Record<string, unknown>,
+): Promise<boolean> {
+  if (
+    !isRunActivelyRunning({
+      status: String(run.status),
+      execution_status: run.execution_status as string | null,
+    })
+  ) {
+    return false;
+  }
+
+  const workflowIds = [
+    run.temporal_workflow_id ? String(run.temporal_workflow_id) : null,
+    run.overlay_workflow_id ? String(run.overlay_workflow_id) : null,
+  ].filter(Boolean) as string[];
+
+  if (workflowIds.length === 0) {
+    await markStaleRunFailed(String(run.id));
+    return false;
+  }
+
+  let anyRunning = false;
+  let anyCompleted = false;
+  for (const workflowId of workflowIds) {
+    const state = await getTemporalWorkflowStatus(workflowId);
+    if (state === "RUNNING") anyRunning = true;
+    if (state === "COMPLETED") anyCompleted = true;
+  }
+
+  if (anyRunning) return true;
+
+  const runId = String(run.id);
+  if (anyCompleted) {
+    await markStaleRunCompleted(runId);
+    return false;
+  }
+
+  await markStaleRunFailed(runId);
+  return false;
+}
+
+async function assertProjectNotRunning(projectId: string): Promise<void> {
+  const { rows } = await pool.query(
+    `SELECT * FROM pipeline_runs
+     WHERE project_id = $1
+       AND (
+         status = 'running'
+         OR (status = 'completed' AND execution_status = 'running')
+       )`,
+    [projectId],
+  );
+  for (const row of rows) {
+    if (await reconcileStaleRunIfNeeded(row)) {
+      throw new Error(
+        `Project ${projectId} already has a running pipeline or execution`,
+      );
+    }
+  }
+}
+
+async function listSpecFilesForPrefix(prefix: string): Promise<string[]> {
+  const store = apiArtifactStore();
+  const keys = await store.listRelativeKeys(prefix);
+  return keys
+    .filter((k) => k.startsWith("tests/") && k.endsWith(".spec.ts"))
+    .map((k) => k.replace(/^tests\//, ""));
 }
 
 function requireE2eAuth(
@@ -105,15 +280,6 @@ function pipelineE2eAuth(
   project: Project,
 ): E2eAuthConfig | undefined {
   return project.e2eAuth ?? undefined;
-}
-
-async function listSpecFiles(artifactRoot: string): Promise<string[]> {
-  const testsDir = path.join(artifactRoot, "tests");
-  try {
-    return (await readdir(testsDir)).filter((f) => f.endsWith(".spec.ts"));
-  } catch {
-    return [];
-  }
 }
 
 function hashJourneyIds(journeyIds: string[]): string {
@@ -180,9 +346,11 @@ export async function startPipeline(
     }
   }
 
+  await assertProjectNotRunning(projectId);
+
   const runId = randomUUID();
   const workflowId = `pipeline-${projectId}-${runId}`;
-  const root = buildArtifactRoot(config.artifactsBaseDir, projectId, runId);
+  const root = artifactPrefix(projectId, runId);
 
   const executionMode = options.executionMode ?? "auto";
   const executeAfterGenerate = options.executeAfterGenerate ?? true;
@@ -309,17 +477,6 @@ export async function getPipelineRun(runId: string): Promise<{
       );
     }
 
-    const generationFinished =
-      mainProgress?.status === "completed" ||
-      run.finished_at != null ||
-      run.status === "completed";
-
-    if (progress?.status === "completed" && !run.finished_at && !isExecutePhase) {
-      await pool.query(
-        `UPDATE pipeline_runs SET status = 'completed', current_agent = NULL, finished_at = NOW() WHERE id = $1`,
-        [runId],
-      );
-    }
     // When a resume overlay exists it supersedes the original main workflow —
     // never let the old workflow's terminal state (failed/cancelled) leak into
     // the run while the overlay is in charge.
@@ -328,6 +485,13 @@ export async function getPipelineRun(runId: string): Promise<{
     // once the DB row is terminal, stale workflow queries must not resurrect
     // failures (e.g. the old main workflow of a resumed-then-completed run).
     const runActive = run.status === "running";
+
+    const generationFinished =
+      mainProgress?.status === "completed" ||
+      run.finished_at != null ||
+      run.status === "completed";
+
+    await reconcileRunTerminalStatus(runId, run, progress);
 
     if (
       runActive &&
@@ -383,35 +547,6 @@ export async function getPipelineRun(runId: string): Promise<{
           [runId],
         );
       }
-      if (
-        run.execution_status === "failed" &&
-        run.status === "running"
-      ) {
-        await pool.query(
-          `UPDATE pipeline_runs SET status = 'failed', finished_at = COALESCE(finished_at, NOW()), current_agent = NULL WHERE id = $1`,
-          [runId],
-        );
-      } else if (
-        run.execution_status === "completed" &&
-        run.status === "running" &&
-        generationFinished
-      ) {
-        await pool.query(
-          `UPDATE pipeline_runs SET status = 'completed', finished_at = COALESCE(finished_at, NOW()), current_agent = NULL WHERE id = $1`,
-          [runId],
-        );
-      } else if (
-        generationFinished &&
-        run.status === "running" &&
-        !generationFailed &&
-        !overlayId &&
-        run.execution_status !== "failed"
-      ) {
-        await pool.query(
-          `UPDATE pipeline_runs SET status = 'completed', current_agent = NULL WHERE id = $1`,
-          [runId],
-        );
-      }
     }
   } catch {
     progress = mergeExecuteProgress(null, null, run);
@@ -422,7 +557,10 @@ export async function getPipelineRun(runId: string): Promise<{
     [runId],
   );
 
-  return { run: updated[0] ?? run, progress };
+  const finalRun = updated[0] ?? run;
+  progress = coerceActiveRunProgress(finalRun, progress);
+
+  return { run: finalRun, progress };
 }
 
 export async function executePipelineRun(
@@ -437,7 +575,7 @@ export async function executePipelineRun(
   if (!run) {
     throw new Error(`Run not found: ${runId}`);
   }
-  if (run.status === "running" || run.execution_status === "running") {
+  if (isRunActivelyRunning(run)) {
     throw new Error("Pipeline or execution already in progress");
   }
 
@@ -446,13 +584,13 @@ export async function executePipelineRun(
     throw new Error(`Project not found: ${run.project_id}`);
   }
 
-  const artifactRoot = String(run.artifact_root);
-  const specFiles = await listSpecFiles(artifactRoot);
+  const prefix = runArtifactPrefix(run);
+  const specFiles = await listSpecFilesForPrefix(prefix);
   if (specFiles.length === 0) {
     throw new Error("No generated spec files; run full pipeline first");
   }
 
-  const generationReady = await hasGenerationArtifacts(artifactRoot);
+  const generationReady = await hasGenerationArtifacts(prefix);
   const canExecute =
     run.status === "completed" ||
     (specFiles.length > 0 && generationReady);
@@ -509,7 +647,7 @@ export async function executePipelineRun(
         {
           projectId: String(run.project_id),
           runId,
-          artifactRoot,
+          artifactRoot: prefix,
           frontendPath,
           targetUrl: project.targetUrl ?? undefined,
           e2eAuth: pipelineE2eAuth(project),
@@ -526,6 +664,12 @@ export async function executePipelineRun(
     );
     throw err;
   }
+
+  await publishRunEvent(runId, {
+    agent: "continuityLead",
+    status: "started",
+    artifactRoot: prefix,
+  });
 
   return { workflowId };
 }
@@ -561,7 +705,7 @@ export async function resumePipelineRun(
   if (!run) {
     throw new Error(`Run not found: ${runId}`);
   }
-  if (run.status === "running" || run.execution_status === "running") {
+  if (isRunActivelyRunning(run)) {
     throw new Error("Pipeline or execution already in progress");
   }
 
@@ -570,11 +714,11 @@ export async function resumePipelineRun(
     throw new Error(`Project not found: ${run.project_id}`);
   }
 
-  const artifactRoot = String(run.artifact_root);
-  try {
-    await access(artifactRoot, constants.F_OK);
-  } catch {
-    throw new Error(`Artifact root not found: ${artifactRoot}`);
+  const prefix = runArtifactPrefix(run);
+  const store = apiArtifactStore();
+  const keys = await store.listRelativeKeys(prefix);
+  if (keys.length === 0 && !String(run.artifact_root).includes("/")) {
+    throw new Error(`Artifact prefix not found: ${prefix}`);
   }
 
   const paths = resolveProjectPaths(config.reposBaseDir, project);
@@ -586,7 +730,9 @@ export async function resumePipelineRun(
     throw new Error(`Frontend path not ready (${frontendPath})`);
   }
 
-  await cleanupDownstreamArtifacts(artifactRoot, options.fromAgent);
+  await assertProjectNotRunning(String(run.project_id));
+
+  await cleanupDownstreamArtifacts(store, prefix, options.fromAgent);
 
   const executeAfterGenerate =
     options.executeAfterGenerate ??
@@ -649,7 +795,7 @@ export async function resumePipelineRun(
         {
           projectId: String(run.project_id),
           runId,
-          artifactRoot,
+          artifactRoot: prefix,
           frontendPath,
           targetUrl: project.targetUrl ?? undefined,
           e2eAuth: pipelineE2eAuth(project),
@@ -667,6 +813,12 @@ export async function resumePipelineRun(
     );
     throw err;
   }
+
+  await publishRunEvent(runId, {
+    agent: options.fromAgent,
+    status: "started",
+    artifactRoot: prefix,
+  });
 
   return { workflowId };
 }
@@ -737,35 +889,67 @@ const ARTIFACT_JSON_FILES: Record<string, string> = {
   "apply-report": "apply-report.json",
 };
 
-export function resolveArtifactPath(
-  artifactRoot: string,
-  key: string,
-): string | null {
-  if (key.startsWith("pom-")) {
-    return path.join(artifactRoot, "poms", key.slice(4));
-  }
-  if (key.startsWith("spec-")) {
-    return path.join(artifactRoot, "tests", key.slice(5));
-  }
-  const rel = ARTIFACT_JSON_FILES[key];
-  if (rel) {
-    return path.join(artifactRoot, rel);
-  }
-  return null;
+function artifactKeyToRelative(key: string): string | null {
+  if (key.startsWith("pom-")) return `poms/${key.slice(4)}`;
+  if (key.startsWith("spec-")) return `tests/${key.slice(5)}`;
+  return ARTIFACT_JSON_FILES[key] ?? null;
 }
 
 export async function artifactExists(
-  artifactRoot: string,
+  prefix: string,
   key: string,
 ): Promise<boolean> {
-  const filePath = resolveArtifactPath(artifactRoot, key);
-  if (!filePath) return true;
-  try {
-    await access(filePath, constants.F_OK);
-    return true;
-  } catch {
-    return false;
+  const rel = artifactKeyToRelative(key);
+  if (!rel) return true;
+  return apiArtifactStore().exists(prefix, rel);
+}
+
+export async function listArtifactFilesFromStore(
+  prefix: string,
+): Promise<Array<{ key: string; label: string; kind: "json" | "text" }>> {
+  const store = apiArtifactStore();
+  const keys = await store.listRelativeKeys(prefix);
+  const items: Array<{ key: string; label: string; kind: "json" | "text" }> = [];
+
+  const jsonOrder = [
+    "component-registry.json",
+    "testid-injections.json",
+    "locator-catalog.json",
+    "journeys.json",
+    "execution-report.json",
+    "apply-report.json",
+  ];
+  const jsonKeyMap: Record<string, string> = {
+    "component-registry.json": "registry",
+    "testid-injections.json": "injections",
+    "locator-catalog.json": "locators",
+    "journeys.json": "journeys",
+    "execution-report.json": "execution-report",
+    "apply-report.json": "apply-report",
+  };
+
+  for (const file of jsonOrder) {
+    if (keys.includes(file)) {
+      items.push({
+        key: jsonKeyMap[file] ?? file,
+        label: file,
+        kind: "json",
+      });
+    }
   }
+
+  for (const key of keys.filter((k) => k.startsWith("poms/") && k.endsWith(".ts")).sort()) {
+    const file = key.replace(/^poms\//, "");
+    items.push({ key: `pom-${file}`, label: key, kind: "text" });
+  }
+  for (const key of keys
+    .filter((k) => k.startsWith("tests/") && k.endsWith(".spec.ts"))
+    .sort()) {
+    const file = key.replace(/^tests\//, "");
+    items.push({ key: `spec-${file}`, label: key, kind: "text" });
+  }
+
+  return items;
 }
 
 export interface ArtifactIndexEntry {
@@ -812,7 +996,7 @@ function indexEntryToKey(
 
 export async function listArtifactsFromIndex(
   runId: string,
-  artifactRoot: string,
+  prefix: string,
 ): Promise<ArtifactIndexEntry[]> {
   const { rows } = await pool.query(
     `SELECT agent, artifact_type, file_path, summary_json
@@ -824,14 +1008,15 @@ export async function listArtifactsFromIndex(
   const seen = new Set<string>();
   const items: ArtifactIndexEntry[] = [];
   for (const row of rows) {
-    const mapped = indexEntryToKey(String(row.artifact_type), String(row.file_path));
+    const filePath = toRelativeArtifactKey(String(row.file_path), prefix);
+    const mapped = indexEntryToKey(String(row.artifact_type), filePath);
     if (seen.has(mapped.key)) continue;
     seen.add(mapped.key);
 
     const isTextArtifact =
       mapped.key.startsWith("pom-") || mapped.key.startsWith("spec-");
     const available = isTextArtifact
-      ? await artifactExists(artifactRoot, mapped.key)
+      ? await artifactExists(prefix, mapped.key)
       : true;
     if (!available) continue;
 

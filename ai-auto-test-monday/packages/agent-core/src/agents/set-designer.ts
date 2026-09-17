@@ -106,7 +106,7 @@ async function generateWithLlmBatch(
   batchCount: number,
 ): Promise<PomFile[]> {
   const summary = buildComponentSummary(components, catalog);
-  const llm = new HigressClient(loadLlmConfigFromEnv());
+  const llm = new HigressClient(loadLlmConfigFromEnv(), "setDesigner");
   console.info(
     `[setDesigner] batch ${batchIndex}/${batchCount} components=${components.map((c) => c.name).join(",")}`,
   );

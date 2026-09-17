@@ -46,7 +46,7 @@ export async function runScriptAnalyst(
 async function enhanceWithLlm(
   components: RawComponent[],
 ): Promise<RawComponent[]> {
-  const llm = new HigressClient(loadLlmConfigFromEnv());
+  const llm = new HigressClient(loadLlmConfigFromEnv(), "scriptAnalyst");
   const enriched = [...components];
 
   for (let i = 0; i < enriched.length; i += BATCH_SIZE) {
