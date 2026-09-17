@@ -3,6 +3,11 @@ import type { PipelineProgressView } from "../lib/merge-progress.js";
 
 export type PipelineWsProgress = PipelineProgressView;
 
+export interface RunSnapshot {
+  status: string;
+  execution_status?: string | null;
+}
+
 interface WsAgentEvent {
   runId: string;
   agent?: string;
@@ -10,7 +15,8 @@ interface WsAgentEvent {
   artifactRoot?: string;
   ts?: string;
   type?: string;
-  progress?: PipelineWsProgress;
+  progress?: PipelineWsProgress | null;
+  run?: RunSnapshot;
 }
 
 const AGENT_ORDER = [
@@ -28,8 +34,12 @@ const GENERATION_AGENTS = AGENT_ORDER.filter((id) => id !== "continuityLead");
 export interface UsePipelineWebSocketOptions {
   executeAfterGenerate?: boolean;
   executeOnly?: boolean;
-  onConnected?: () => void;
+  onRunSnapshot?: (
+    run: RunSnapshot,
+    progress: PipelineWsProgress | null,
+  ) => void;
   onExecutionFinished?: (status: "completed" | "failed", error?: string) => void;
+  onRunCancelled?: () => void;
 }
 
 export function usePipelineWebSocket(
@@ -42,10 +52,12 @@ export function usePipelineWebSocket(
   const completedRef = useRef<string[]>([]);
   const onAgentCompletedRef = useRef(onAgentCompleted);
   onAgentCompletedRef.current = onAgentCompleted;
-  const onConnectedRef = useRef(options.onConnected);
-  onConnectedRef.current = options.onConnected;
+  const onRunSnapshotRef = useRef(options.onRunSnapshot);
+  onRunSnapshotRef.current = options.onRunSnapshot;
   const onExecutionFinishedRef = useRef(options.onExecutionFinished);
   onExecutionFinishedRef.current = options.onExecutionFinished;
+  const onRunCancelledRef = useRef(options.onRunCancelled);
+  onRunCancelledRef.current = options.onRunCancelled;
   const executeAfterGenerateRef = useRef(options.executeAfterGenerate ?? true);
   executeAfterGenerateRef.current = options.executeAfterGenerate ?? true;
   const executeOnlyRef = useRef(options.executeOnly ?? false);
@@ -85,7 +97,6 @@ export function usePipelineWebSocket(
       ws.onopen = () => {
         attempts = 0;
         setConnected(true);
-        onConnectedRef.current?.();
       };
       ws.onclose = () => {
         setConnected(false);
@@ -97,127 +108,146 @@ export function usePipelineWebSocket(
       };
       ws.onerror = () => setConnected(false);
 
-    ws.onmessage = (ev) => {
-      let msg: WsAgentEvent;
-      try {
-        msg = JSON.parse(ev.data as string);
-      } catch {
-        return;
-      }
-      if (msg.runId && msg.runId !== runId) return;
-
-      if (msg.type === "connected") return;
-
-      if (msg.type === "snapshot" && msg.progress) {
-        seedFromSnapshot(msg.progress);
-        return;
-      }
-
-      const agent = msg.agent;
-      const status = msg.status;
-
-      if (agent && status === "started") {
-        const baseCompleted = executeOnlyRef.current
-          ? [...GENERATION_AGENTS]
-          : completedRef.current.length > 0
-            ? completedRef.current
-            : [];
-        setProgress((prev) => ({
-          status: "running",
-          currentAgent: agent,
-          completedAgents: prev?.completedAgents?.length
-            ? prev.completedAgents
-            : baseCompleted,
-          artifactRoot: msg.artifactRoot ?? prev?.artifactRoot,
-          executeAfterGenerate: executeAfterGenerateRef.current,
-          skippedAgents: prev?.skippedAgents ?? [],
-        }));
-      }
-
-      if (agent && status === "completed") {
-        if (!completedRef.current.includes(agent)) {
-          completedRef.current = [...completedRef.current, agent];
+      ws.onmessage = (ev) => {
+        let msg: WsAgentEvent;
+        try {
+          msg = JSON.parse(ev.data as string);
+        } catch {
+          return;
         }
-        onAgentCompletedRef.current?.(agent);
-        const idx = AGENT_ORDER.indexOf(agent);
-        const nextAgent =
-          idx >= 0 && idx < AGENT_ORDER.length - 1
-            ? AGENT_ORDER[idx + 1]
-            : null;
-        const pipelineDone = agent === "continuityLead";
-        const skipContinuityLead =
-          agent === "assistantDirector" &&
-          executeAfterGenerateRef.current === false &&
-          !executeOnlyRef.current;
+        if (msg.runId && msg.runId !== runId) return;
 
-        if (skipContinuityLead) {
-          setProgress({
-            status: "completed",
-            currentAgent: null,
-            completedAgents: [...completedRef.current],
-            artifactRoot: msg.artifactRoot,
-            executeAfterGenerate: false,
-            skippedAgents: ["continuityLead"],
-          });
+        if (msg.type === "connected") return;
+
+        if (msg.type === "snapshot") {
+          const snapshotProgress = msg.progress ?? null;
+          if (snapshotProgress) {
+            seedFromSnapshot(snapshotProgress);
+          }
+          if (msg.run) {
+            onRunSnapshotRef.current?.(msg.run, snapshotProgress);
+          }
           return;
         }
 
-        setProgress((prev) => ({
-          status: pipelineDone ? "completed" : "running",
-          currentAgent: pipelineDone ? null : nextAgent,
-          completedAgents: [...completedRef.current],
-          artifactRoot: msg.artifactRoot ?? prev?.artifactRoot,
-          executeAfterGenerate: executeAfterGenerateRef.current,
-          skippedAgents: prev?.skippedAgents ?? [],
-        }));
-      }
+        const agent = msg.agent;
+        const status = msg.status;
 
-      if (status === "execution-completed") {
-        if (!completedRef.current.includes("continuityLead")) {
-          completedRef.current = [...completedRef.current, "continuityLead"];
+        if (status === "cancelled") {
+          onRunCancelledRef.current?.();
+          setProgress((prev) => ({
+            status: "cancelled",
+            currentAgent: null,
+            completedAgents: prev?.completedAgents ?? [...completedRef.current],
+            artifactRoot: msg.artifactRoot ?? prev?.artifactRoot,
+            executeAfterGenerate: executeAfterGenerateRef.current,
+            skippedAgents: prev?.skippedAgents ?? [],
+          }));
+          return;
         }
-        onExecutionFinishedRef.current?.("completed");
-        setProgress((prev) => ({
-          status: "completed",
-          currentAgent: null,
-          completedAgents: [...completedRef.current],
-          artifactRoot: msg.artifactRoot ?? prev?.artifactRoot,
-          executeAfterGenerate: true,
-          skippedAgents: [],
-        }));
-      }
 
-      if (status === "execution-failed") {
-        if (!completedRef.current.includes("continuityLead")) {
-          completedRef.current = [...completedRef.current, "continuityLead"];
+        if (agent && status === "started") {
+          const baseCompleted = executeOnlyRef.current
+            ? [...GENERATION_AGENTS]
+            : completedRef.current.length > 0
+              ? completedRef.current
+              : [];
+          setProgress((prev) => ({
+            status: "running",
+            currentAgent: agent,
+            completedAgents: prev?.completedAgents?.length
+              ? prev.completedAgents
+              : baseCompleted,
+            artifactRoot: msg.artifactRoot ?? prev?.artifactRoot,
+            executeAfterGenerate: executeAfterGenerateRef.current,
+            skippedAgents: prev?.skippedAgents ?? [],
+          }));
         }
-        const err = (msg as { error?: string }).error;
-        onExecutionFinishedRef.current?.("failed", err);
-        setProgress((prev) => ({
-          status: "failed",
-          currentAgent: null,
-          completedAgents: [...completedRef.current],
-          artifactRoot: msg.artifactRoot ?? prev?.artifactRoot,
-          error: err,
-          executeAfterGenerate: true,
-          skippedAgents: [],
-        }));
-      }
 
-      if (agent && status === "failed") {
-        setProgress((prev) => ({
-          status: "failed",
-          currentAgent: null,
-          completedAgents: prev?.completedAgents?.length
-            ? prev.completedAgents
-            : [...completedRef.current],
-          artifactRoot: msg.artifactRoot ?? prev?.artifactRoot,
-          error: (msg as { error?: string }).error,
-          executeAfterGenerate: executeAfterGenerateRef.current,
-          skippedAgents: prev?.skippedAgents ?? [],
-        }));
-      }
-    };
+        if (agent && status === "completed") {
+          if (!completedRef.current.includes(agent)) {
+            completedRef.current = [...completedRef.current, agent];
+          }
+          onAgentCompletedRef.current?.(agent);
+          const idx = AGENT_ORDER.indexOf(agent);
+          const nextAgent =
+            idx >= 0 && idx < AGENT_ORDER.length - 1
+              ? AGENT_ORDER[idx + 1]
+              : null;
+          const pipelineDone = agent === "continuityLead";
+          const skipContinuityLead =
+            agent === "assistantDirector" &&
+            executeAfterGenerateRef.current === false &&
+            !executeOnlyRef.current;
+
+          if (skipContinuityLead) {
+            setProgress({
+              status: "completed",
+              currentAgent: null,
+              completedAgents: [...completedRef.current],
+              artifactRoot: msg.artifactRoot,
+              executeAfterGenerate: false,
+              skippedAgents: ["continuityLead"],
+            });
+            return;
+          }
+
+          setProgress((prev) => ({
+            status: pipelineDone ? "completed" : "running",
+            currentAgent: pipelineDone ? null : nextAgent,
+            completedAgents: [...completedRef.current],
+            artifactRoot: msg.artifactRoot ?? prev?.artifactRoot,
+            executeAfterGenerate: executeAfterGenerateRef.current,
+            skippedAgents: prev?.skippedAgents ?? [],
+          }));
+        }
+
+        if (status === "execution-completed") {
+          if (!completedRef.current.includes("continuityLead")) {
+            completedRef.current = [...completedRef.current, "continuityLead"];
+          }
+          onExecutionFinishedRef.current?.("completed");
+          setProgress((prev) => ({
+            status: "completed",
+            currentAgent: null,
+            completedAgents: [...completedRef.current],
+            artifactRoot: msg.artifactRoot ?? prev?.artifactRoot,
+            executeAfterGenerate: true,
+            skippedAgents: [],
+          }));
+        }
+
+        if (status === "execution-failed") {
+          if (!completedRef.current.includes("continuityLead")) {
+            completedRef.current = [...completedRef.current, "continuityLead"];
+          }
+          const err = (msg as { error?: string }).error;
+          onExecutionFinishedRef.current?.("failed", err);
+          setProgress((prev) => ({
+            status: "failed",
+            currentAgent: null,
+            completedAgents: [...completedRef.current],
+            artifactRoot: msg.artifactRoot ?? prev?.artifactRoot,
+            error: err,
+            executeAfterGenerate: true,
+            skippedAgents: [],
+          }));
+        }
+
+        if (agent && status === "failed") {
+          setProgress((prev) => ({
+            status: "failed",
+            currentAgent: null,
+            completedAgents: prev?.completedAgents?.length
+              ? prev.completedAgents
+              : [...completedRef.current],
+            artifactRoot: msg.artifactRoot ?? prev?.artifactRoot,
+            error: (msg as { error?: string }).error,
+            executeAfterGenerate: executeAfterGenerateRef.current,
+            skippedAgents: prev?.skippedAgents ?? [],
+          }));
+        }
+      };
     };
 
     connect();

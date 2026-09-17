@@ -13,7 +13,10 @@ import {
 import { ProjectPanel, type ProjectRecord } from "./components/ProjectPanel";
 import { RunHistoryPanel } from "./components/RunHistoryPanel";
 import { usePipelineWebSocket } from "./hooks/usePipelineWebSocket";
-import { mergePipelineProgress } from "./lib/merge-progress";
+import {
+  mergePipelineProgress,
+  type PipelineProgressView,
+} from "./lib/merge-progress";
 
 const AGENTS = [
   { id: "scriptAnalyst", label: "Script Analyst" },
@@ -171,7 +174,6 @@ export default function App() {
     content: string;
   } | null>(null);
   const previewScrollRef = useRef<HTMLDivElement>(null);
-  const pollRunRef = useRef<(id: string) => Promise<void>>(async () => {});
   const urlHydratedRef = useRef(false);
 
   const clearRunViewState = useCallback(() => {
@@ -254,6 +256,31 @@ export default function App() {
     });
   }, [runId]);
 
+  const finalizeRunTerminal = useCallback(
+    async (
+      id: string,
+      progressStatus: string,
+      execStatus?: string | null,
+    ) => {
+      setLoading(false);
+      setExecutingOnly(false);
+      if (progressStatus === "cancelled") return;
+      const listData = await loadArtifactList(id);
+      const hasReport = listData?.files?.some(
+        (f: { key: string }) => f.key === "execution-report",
+      );
+      if (progressStatus === "completed") {
+        void loadArtifact(hasReport ? "execution-report" : "journeys", id);
+      } else if (
+        progressStatus === "failed" &&
+        (hasReport || execStatus === "failed")
+      ) {
+        if (hasReport) void loadArtifact("execution-report", id);
+      }
+    },
+    [loadArtifact, loadArtifactList],
+  );
+
   const handleAgentCompleted = useCallback(
     (agent: string) => {
       if (!runId) return;
@@ -273,10 +300,53 @@ export default function App() {
       setActiveRun((prev) =>
         prev ? { ...prev, execution_status: status } : prev,
       );
-      setLoading(false);
-      setExecutingOnly(false);
+      if (runId) {
+        void finalizeRunTerminal(runId, status, status);
+      }
     },
-    [],
+    [runId, finalizeRunTerminal],
+  );
+
+  const handleRunCancelled = useCallback(() => {
+    setActiveRun((prev) =>
+      prev
+        ? { ...prev, status: "cancelled", execution_status: null }
+        : prev,
+    );
+    if (runId) {
+      void finalizeRunTerminal(runId, "cancelled");
+    }
+  }, [runId, finalizeRunTerminal]);
+
+  const onRunSnapshot = useCallback(
+    (
+      run: { status: string; execution_status?: string | null },
+      snapshotProgress: PipelineProgressView | null,
+    ) => {
+      setActiveRun({
+        status: run.status,
+        execution_status: run.execution_status,
+      });
+      if (snapshotProgress) {
+        setProgress((prev) => mergePipelineProgress(snapshotProgress, prev));
+      }
+      const progressStatus = snapshotProgress?.status ?? run.status;
+      const terminal = ["completed", "failed", "cancelled"].includes(
+        progressStatus,
+      );
+      const execRunning = run.execution_status === "running";
+      const runActive =
+        execRunning ||
+        run.status === "running" ||
+        snapshotProgress?.status === "running";
+      if (runActive && !terminal) {
+        if (execRunning) setExecutingOnly(true);
+        setLoading(true);
+      } else if (terminal && runId) {
+        void finalizeRunTerminal(runId, progressStatus, run.execution_status);
+      }
+    },
+    [runId, finalizeRunTerminal],
   );
 
   const { connected: wsConnected, progress: wsProgress } = usePipelineWebSocket(
@@ -286,19 +356,37 @@ export default function App() {
     {
       executeAfterGenerate: executingOnly ? true : executeAfterGenerate,
       executeOnly: executingOnly,
-      onConnected: runId ? () => void pollRunRef.current(runId) : undefined,
+      onRunSnapshot,
       onExecutionFinished: handleExecutionFinished,
+      onRunCancelled: handleRunCancelled,
     },
   );
 
   useEffect(() => {
     if (!wsProgress) return;
     setProgress((prev) => mergePipelineProgress(prev, wsProgress));
-    if (wsProgress.status === "completed" || wsProgress.status === "failed") {
-      setLoading(false);
-      setExecutingOnly(false);
+    if (wsProgress.currentAgent === "continuityLead") {
+      setActiveRun((prev) =>
+        prev ? { ...prev, execution_status: "running" } : prev,
+      );
     }
-  }, [wsProgress]);
+    if (
+      wsProgress.status === "completed" ||
+      wsProgress.status === "failed" ||
+      wsProgress.status === "cancelled"
+    ) {
+      if (runId) {
+        void finalizeRunTerminal(
+          runId,
+          wsProgress.status,
+          wsProgress.status === "failed" ? "failed" : undefined,
+        );
+      } else {
+        setLoading(false);
+        setExecutingOnly(false);
+      }
+    }
+  }, [wsProgress, runId, finalizeRunTerminal]);
 
   const availableSpecKeys = useMemo(
     () =>
@@ -349,62 +437,6 @@ export default function App() {
     [runId],
   );
 
-  const pollRun = useCallback(
-    async (id: string) => {
-      const res = await fetch(`/api/pipeline/runs/${id}`);
-      const data = await res.json();
-      if (data.run) {
-        setActiveRun({
-          status: String(data.run.status),
-          execution_status: data.run.execution_status as string | null | undefined,
-        });
-      }
-      if (data.progress) {
-        setProgress(data.progress);
-        if (
-          data.run?.execution_status === "completed" ||
-          data.run?.execution_status === "failed"
-        ) {
-          setExecutingOnly(false);
-        }
-      }
-      const execRunning = data.run?.execution_status === "running";
-      if (execRunning) {
-        setLoading(true);
-        return;
-      }
-      if (
-        data.progress?.status === "completed" ||
-        data.progress?.status === "failed" ||
-        data.progress?.status === "cancelled"
-      ) {
-        setLoading(false);
-        setExecutingOnly(false);
-        const listData = await loadArtifactList(id);
-        const hasReport = listData?.files?.some(
-          (f: { key: string }) => f.key === "execution-report",
-        );
-        if (data.progress?.status === "completed") {
-          void loadArtifact(hasReport ? "execution-report" : "journeys", id);
-        } else if (
-          data.progress?.status === "failed" &&
-          (hasReport || data.run?.execution_status === "failed")
-        ) {
-          if (hasReport) void loadArtifact("execution-report", id);
-        }
-      }
-    },
-    [loadArtifact, loadArtifactList],
-  );
-
-  pollRunRef.current = pollRun;
-
-  useEffect(() => {
-    if (!runId || !loading) return;
-    const t = setInterval(() => void pollRun(runId), 2500);
-    return () => clearInterval(t);
-  }, [runId, loading, pollRun]);
-
   const loadHistoricalRun = useCallback(
     async (id: string) => {
       setRunId(id);
@@ -412,7 +444,7 @@ export default function App() {
       setError(null);
       setJourneySpecOverlay(null);
       try {
-        const res = await fetch(`/api/pipeline/runs/${id}`);
+        const res = await fetch(`/api/pipeline/runs/${id}`, { cache: "no-store" });
         const data = await res.json();
         const execStatus = data.run?.execution_status as
           | string
@@ -472,13 +504,11 @@ export default function App() {
         if (execStatus === "running") {
           setExecutingOnly(true);
           setLoading(true);
-          void pollRun(id);
         } else if (runActive) {
           // Generation phase has execution_status == null but the run is
-          // still active — keep loading so WS + polling stay enabled.
+          // still active — keep loading so WS stays enabled.
           setExecutingOnly(false);
           setLoading(true);
-          void pollRun(id);
         } else {
           setExecutingOnly(false);
           setLoading(false);
@@ -489,7 +519,7 @@ export default function App() {
         setExecutingOnly(false);
       }
     },
-    [loadArtifact, loadArtifactList, pollRun],
+    [loadArtifact, loadArtifactList],
   );
 
   useEffect(() => {
@@ -540,7 +570,6 @@ export default function App() {
         status: prev?.status ?? "completed",
         execution_status: "running",
       }));
-      void pollRun(runId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setLoading(false);
@@ -593,7 +622,6 @@ export default function App() {
         execution_status:
           fromAgent === "continuityLead" ? "running" : prev?.execution_status,
       }));
-      void pollRun(runId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setLoading(false);
@@ -632,7 +660,7 @@ export default function App() {
       setRunId(data.runId);
       setProjectIdInUrl(projectId);
       setRunIdInUrl(data.runId);
-      void pollRun(data.runId);
+      setActiveRun({ status: "running", execution_status: null });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setLoading(false);
@@ -649,10 +677,15 @@ export default function App() {
       if (!data.ok) {
         throw new Error(data.error ?? "cancel failed");
       }
-      setLoading(false);
       setProgress((prev) =>
         prev ? { ...prev, status: "cancelled", currentAgent: null } : prev,
       );
+      setActiveRun((prev) =>
+        prev
+          ? { ...prev, status: "cancelled", execution_status: null }
+          : prev,
+      );
+      if (runId) void finalizeRunTerminal(runId, "cancelled");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -675,7 +708,12 @@ export default function App() {
   ): "done" | "active" | "pending" | "skipped" | "failed" {
     if (agentId === "continuityLead") {
       const execStatus = activeRun?.execution_status;
-      if (execStatus === "running") return "active";
+      if (
+        execStatus === "running" ||
+        progress?.currentAgent === "continuityLead"
+      ) {
+        return "active";
+      }
       if (execStatus === "failed") return "failed";
       if (execStatus === "completed") return "done";
     }
@@ -813,8 +851,13 @@ export default function App() {
         <h1>Monday Director — Artifact 工作台</h1>
         <p>
           Temporal 编排 · Agent 1–7 生成 + 执行（Gherkin / Playwright）
-          {wsConnected && loading && (
+          {loading && wsConnected && (
             <span className="badge badge-ready"> WS 已连接</span>
+          )}
+          {loading && !wsConnected && (
+            <span className="badge badge-running">
+              WS 未连接 — 正在重连，状态可能滞后
+            </span>
           )}
         </p>
       </header>

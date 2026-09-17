@@ -1,11 +1,14 @@
 import type {
+  ComponentRegistry,
   JourneysDocument,
   Journey,
+  JourneyStep,
   LocatorCatalog,
 } from "../artifacts/types.js";
 import { specGenerationSchema } from "../artifacts/types.js";
 import { loadLlmConfigFromEnv } from "../config.js";
 import { HigressClient } from "../llm/higress-client.js";
+import { normalizeJourneysForExecution } from "../lib/journey-normalize.js";
 import {
   enrichPomsForJourneys,
   parsePomMethods,
@@ -15,7 +18,8 @@ import {
   findSpecPomMethodMismatches,
   journeyNeedsUnauthenticatedContext,
 } from "../lib/spec-pom-preflight.js";
-import { readFile } from "node:fs/promises";
+import type { E2eAuthConfig } from "../types.js";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export interface SpecFile {
@@ -29,6 +33,9 @@ export interface AssistantDirectorInput {
   catalog: LocatorCatalog;
   pomsDir: string;
   targetUrl?: string;
+  e2eAuth?: E2eAuthConfig;
+  registry?: ComponentRegistry;
+  artifactRoot?: string;
 }
 
 function uniquePoms(journey: Journey): string[] {
@@ -40,6 +47,20 @@ function formatArgs(args: (string | number | boolean)[] | undefined): string {
   return args
     .map((a) => (typeof a === "string" ? JSON.stringify(a) : String(a)))
     .join(", ");
+}
+
+function formatStepArgs(
+  step: JourneyStep,
+  e2eAuth?: E2eAuthConfig,
+): string {
+  if (!step.args?.length) return "";
+  if (e2eAuth && step.method === "enterUsername") {
+    return "process.env.E2E_USERNAME!";
+  }
+  if (e2eAuth && step.method === "enterPassword") {
+    return "process.env.E2E_PASSWORD!";
+  }
+  return formatArgs(step.args);
 }
 
 function violatesSpecDiscipline(content: string): boolean {
@@ -56,6 +77,7 @@ function buildDeterministicSpec(
   journey: Journey,
   targetUrl: string,
   pomMethods: Map<string, Set<string>>,
+  e2eAuth?: E2eAuthConfig,
 ): string {
   const poms = uniquePoms(journey);
   const imports = poms
@@ -114,7 +136,7 @@ function buildDeterministicSpec(
   for (const step of journey.steps) {
     const varName = varNames.get(step.pom);
     if (!varName) continue;
-    const args = formatArgs(step.args);
+    const args = formatStepArgs(step, e2eAuth);
     const comment = step.description ? `    // Step ${step.step}: ${step.description}` : `    // Step ${step.step}`;
     lines.push(comment);
 
@@ -241,21 +263,59 @@ function resolveSpecContent(
   targetUrl: string,
   methods: Map<string, Set<string>>,
   llmContent: string | null,
+  e2eAuth?: E2eAuthConfig,
 ): string {
   if (llmContent && !violatesSpecDiscipline(llmContent)) {
     const mismatches = findSpecPomMethodMismatches(llmContent, methods);
     if (mismatches.length === 0) return llmContent;
   }
-  return buildDeterministicSpec(journey, targetUrl, methods);
+  return buildDeterministicSpec(journey, targetUrl, methods, e2eAuth);
+}
+
+async function loadRegistry(
+  input: AssistantDirectorInput,
+): Promise<ComponentRegistry | null> {
+  if (input.registry) return input.registry;
+  if (!input.artifactRoot) return null;
+  try {
+    const raw = await readFile(
+      path.join(input.artifactRoot, "component-registry.json"),
+      "utf8",
+    );
+    return JSON.parse(raw) as ComponentRegistry;
+  } catch {
+    return null;
+  }
 }
 
 export async function runAssistantDirector(
   input: AssistantDirectorInput,
 ): Promise<SpecFile[]> {
   const targetUrl = input.targetUrl ?? input.journeysDoc.targetUrl ?? "/";
-  const journeys = [...input.journeysDoc.journeys].sort((a, b) =>
+  const registry = await loadRegistry(input);
+  let journeys = [...input.journeysDoc.journeys].sort((a, b) =>
     a.id.localeCompare(b.id),
   );
+
+  if (registry) {
+    journeys = normalizeJourneysForExecution(journeys, {
+      registry,
+      targetUrl,
+      e2eAuth: input.e2eAuth,
+    });
+    if (input.artifactRoot) {
+      const updatedDoc: JourneysDocument = {
+        ...input.journeysDoc,
+        targetUrl,
+        journeys,
+      };
+      await writeFile(
+        path.join(input.artifactRoot, "journeys.json"),
+        `${JSON.stringify(updatedDoc, null, 2)}\n`,
+        "utf8",
+      );
+    }
+  }
 
   await enrichPomsForJourneys(journeys, input.pomsDir, input.catalog);
 
@@ -276,13 +336,24 @@ export async function runAssistantDirector(
     pomMethods = methods;
 
     const llmContent = await tryLlmSpec(journey, targetUrl, input.pomsDir);
-    let content = resolveSpecContent(journey, targetUrl, methods, llmContent);
+    let content = resolveSpecContent(
+      journey,
+      targetUrl,
+      methods,
+      llmContent,
+      input.e2eAuth,
+    );
 
     let mismatches = findSpecPomMethodMismatches(content, methods);
     if (mismatches.length > 0) {
       await enrichPomsForJourneys([journey], input.pomsDir, input.catalog);
       pomMethods = await loadPomMethods(input.pomsDir, allPoms);
-      content = buildDeterministicSpec(journey, targetUrl, pomMethods);
+      content = buildDeterministicSpec(
+        journey,
+        targetUrl,
+        pomMethods,
+        input.e2eAuth,
+      );
       mismatches = findSpecPomMethodMismatches(content, pomMethods);
     }
 
@@ -307,3 +378,6 @@ export async function runAssistantDirector(
 
   return specs;
 }
+
+/** @internal Exported for unit tests */
+export { buildDeterministicSpec };

@@ -148,7 +148,7 @@ function genericAssertMethod(
   method: string,
   locs: LocatorCatalog["locators"] = [],
 ): string {
-  if (/Login|Redirect/i.test(method)) {
+  if (method === "assertRedirectToLogin") {
     return [
       `  async ${method}(): Promise<void> {`,
       "    await expect(this.page).toHaveURL(/login/i);",
@@ -204,6 +204,38 @@ function methodBodyForStep(
     return [
       "  async waitForReady(): Promise<void> {",
       "    await this.page.waitForLoadState('domcontentloaded');",
+      "  }",
+    ].join("\n");
+  }
+
+  if (method === "assertRedirectToLogin") {
+    return [
+      "  async assertRedirectToLogin(): Promise<void> {",
+      "    await expect(this.page).toHaveURL(/login/i);",
+      "  }",
+    ].join("\n");
+  }
+
+  if (method === "assertRedirectToDashboard") {
+    return [
+      "  async assertRedirectToDashboard(): Promise<void> {",
+      "    await expect(this.page).toHaveURL(/dashboard/i);",
+      "  }",
+    ].join("\n");
+  }
+
+  if (method === "assertNotOnLoginPage") {
+    return [
+      "  async assertNotOnLoginPage(): Promise<void> {",
+      "    await expect(this.page).not.toHaveURL(/login/i);",
+      "  }",
+    ].join("\n");
+  }
+
+  if (method === "assertLoginSuccessVisible") {
+    return [
+      "  async assertLoginSuccessVisible(): Promise<void> {",
+      "    await expect(this.page.getByRole('status')).toContainText(/登录成功|welcome/i);",
       "  }",
     ].join("\n");
   }
@@ -312,6 +344,20 @@ function methodBodyForStep(
     return [
       `  async ${method}(${param}: string): Promise<void> {`,
       `    await this.${prop}.fill(${param});`,
+      "  }",
+    ].join("\n");
+  }
+
+  if (method === "clickGoLoginLink") {
+    const linkLoc =
+      locs.find(
+        (l) => l.testId === "go-login" || /link/i.test(l.element),
+      ) ?? locs[0];
+    if (!linkLoc) return null;
+    const prop = toPropName(linkLoc.element);
+    return [
+      "  async clickGoLoginLink(): Promise<void> {",
+      `    await this.${prop}.click();`,
       "  }",
     ].join("\n");
   }

@@ -14,6 +14,7 @@ import {
   loadPipelineScaleConfigFromEnv,
 } from "../config.js";
 import { HigressClient } from "../llm/higress-client.js";
+import { normalizeJourneysForExecution } from "../lib/journey-normalize.js";
 import {
   chunk,
   componentNameFromPomClass,
@@ -81,43 +82,15 @@ function normalizeJourneySteps(journey: Journey): Journey {
   };
 }
 
-function normalizePermissionBoundaryJourney(journey: Journey): Journey {
-  if (journey.category !== "Permission Boundary") {
-    return journey;
-  }
-
-  const steps = journey.steps.map((step) => {
-    const onLoginPage =
-      step.action === "navigate" &&
-      (step.args?.some((a) => String(a).includes("/login")) ?? false);
-    if (onLoginPage) return step;
-
-    const assertsLoginForm =
-      step.action === "assert_visible" &&
-      (/form|login/i.test(step.method) ||
-        /form|login/i.test(step.description ?? ""));
-
-    if (assertsLoginForm) {
-      return {
-        ...step,
-        action: "assert_state" as const,
-        method: "assertRedirectToLogin",
-        description:
-          step.description ??
-          "Verify unauthenticated access redirects to login",
-      };
-    }
-    return step;
-  });
-
-  return { ...journey, steps };
-}
-
-function postProcessJourneys(journeys: Journey[]): Journey[] {
-  return journeys
+function postProcessJourneys(
+  journeys: Journey[],
+  registry: ComponentRegistry,
+  targetUrl?: string,
+): Journey[] {
+  const normalized = journeys
     .map(normalizeJourneySteps)
-    .map(normalizePermissionBoundaryJourney)
     .map((j) => ({ ...j, priority: j.priority ?? "P1" }));
+  return normalizeJourneysForExecution(normalized, { registry, targetUrl });
 }
 
 function filterValidJourneys(
@@ -154,9 +127,10 @@ Return JSON { journeys: [...] } with ${journeyMin} to ${journeyMax} journeys.
 Each journey MUST include: id (kebab-case), name, description, priority (P1-P4), category, gherkinText (full Gherkin Scenario with Given/When/Then), steps[].
 category MUST be one of: ${JOURNEY_CATEGORIES.join(", ")}.
 Each step: step (1-based), action (navigate|assert_visible|interact|assert_state), pom (MUST be from availablePoms), method, args (optional array), description.
-Method vocabulary (use ONLY these patterns): navigateTo, waitForReady, enterUsername, enterPassword, submitLogin, click{Component}Action, assert{Element}Visible, assertRedirectToLogin.
+Method vocabulary (use ONLY these patterns): navigateTo, waitForReady, enterUsername, enterPassword, submitLogin, clickGoLoginLink, click{Component}Action, assert{Element}Visible, assertRedirectToLogin, assertRedirectToDashboard, assertLoginSuccessVisible.
 Do NOT invent names like fillTextInput or fillPasswordInput.
-For Permission Boundary journeys: assert redirect via assertRedirectToLogin (URL contains /login), NOT assertFormVisible on pages that were not navigated to /login.
+For login success journeys: after submitLogin use assertRedirectToDashboard and assertLoginSuccessVisible (not assertLinkVisible on home).
+For Permission Boundary on public home pages: use HomePage assertLinkVisible for go-login, then clickGoLoginLink + LoginPage assertFormVisible.
 Use only POM class names from availablePoms. Create at least one journey per POM in availablePoms. Vary categories across journeys when possible.`,
     JSON.stringify({
       targetUrl: targetUrl ?? "",
@@ -184,6 +158,8 @@ Use only POM class names from availablePoms. Create at least one journey per POM
       category: j.category as Journey["category"],
       priority: j.priority ?? "P1",
     })),
+    registry,
+    targetUrl,
   );
 }
 
@@ -240,9 +216,10 @@ Return JSON { journeys: [...] } with ${journeyMin} to ${journeyMax} journeys.
 Each journey MUST include: id (kebab-case), name, description, priority (P1-P4), category, gherkinText (full Gherkin Scenario with Given/When/Then), steps[].
 category MUST be one of: ${JOURNEY_CATEGORIES.join(", ")}.
 Each step: step (1-based), action (navigate|assert_visible|interact|assert_state), pom (MUST be from availablePoms), method, args (optional array), description.
-Method vocabulary (use ONLY these patterns): navigateTo, waitForReady, enterUsername, enterPassword, submitLogin, click{Component}Action, assert{Element}Visible, assertRedirectToLogin.
+Method vocabulary (use ONLY these patterns): navigateTo, waitForReady, enterUsername, enterPassword, submitLogin, clickGoLoginLink, click{Component}Action, assert{Element}Visible, assertRedirectToLogin, assertRedirectToDashboard, assertLoginSuccessVisible.
 Do NOT invent names like fillTextInput or fillPasswordInput.
-For Permission Boundary journeys: assert redirect via assertRedirectToLogin (URL contains /login), NOT assertFormVisible on pages that were not navigated to /login.
+For login success journeys: after submitLogin use assertRedirectToDashboard and assertLoginSuccessVisible.
+For Permission Boundary on public home pages: use HomePage assertLinkVisible, then clickGoLoginLink + LoginPage assertFormVisible.
 Use only POM class names from availablePoms. Cover different top components across journeys.`,
       JSON.stringify({
         targetUrl: targetUrl ?? "",
@@ -277,6 +254,8 @@ Use only POM class names from availablePoms. Cover different top components acro
       category: j.category as Journey["category"],
       priority: j.priority ?? "P1",
     })),
+    registry,
+    targetUrl,
   );
 }
 

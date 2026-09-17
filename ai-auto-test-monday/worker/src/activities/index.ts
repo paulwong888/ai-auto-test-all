@@ -236,11 +236,15 @@ export async function assistantDirector(input: PipelineInput): Promise<void> {
   const testsDir = path.join(input.artifactRoot, "tests");
   await ensureDir(testsDir);
 
+  const registry = await readRegistry(input.artifactRoot);
   const specs = await runAssistantDirector({
     journeysDoc,
     catalog,
     pomsDir,
     targetUrl: input.targetUrl,
+    e2eAuth: input.e2eAuth,
+    registry,
+    artifactRoot: input.artifactRoot,
   });
 
   const keepSpecFiles = new Set(specs.map((spec) => spec.fileName));

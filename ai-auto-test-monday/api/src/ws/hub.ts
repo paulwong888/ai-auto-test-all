@@ -6,6 +6,7 @@ const subscriptions = new Map<string, Set<WebSocket>>();
 const subscribedChannels = new Set<string>();
 
 let subscriber: Redis | null = null;
+let publisher: Redis | null = null;
 let messageHandlerAttached = false;
 
 function getSubscriber(): Redis | null {
@@ -14,6 +15,36 @@ function getSubscriber(): Redis | null {
     subscriber = new Redis(config.redisUrl, { maxRetriesPerRequest: 1 });
   }
   return subscriber;
+}
+
+function getPublisher(): Redis | null {
+  if (!config.redisUrl) return null;
+  if (!publisher) {
+    publisher = new Redis(config.redisUrl, {
+      maxRetriesPerRequest: 1,
+      lazyConnect: true,
+    });
+  }
+  return publisher;
+}
+
+export async function publishRunEvent(
+  runId: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const redis = getPublisher();
+  if (!redis) return;
+  try {
+    if (redis.status !== "ready") {
+      await redis.connect();
+    }
+    await redis.publish(
+      `pipeline:${runId}`,
+      JSON.stringify({ runId, ...payload, ts: new Date().toISOString() }),
+    );
+  } catch {
+    // WS is best-effort
+  }
 }
 
 function attachMessageHandler(sub: Redis): void {

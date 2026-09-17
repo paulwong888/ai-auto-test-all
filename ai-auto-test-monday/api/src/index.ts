@@ -47,10 +47,19 @@ wss.on("connection", (ws, req) => {
     void subscribeRun(ws, runId);
     ws.on("close", () => unsubscribeRun(ws, runId));
     void getPipelineRun(runId)
-      .then(({ progress }) => {
-        if (progress && ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: "snapshot", runId, progress }));
-        }
+      .then(({ progress, run }) => {
+        if (ws.readyState !== ws.OPEN) return;
+        ws.send(
+          JSON.stringify({
+            type: "snapshot",
+            runId,
+            progress: progress ?? null,
+            run: {
+              status: String(run.status),
+              execution_status: run.execution_status as string | null,
+            },
+          }),
+        );
       })
       .catch(() => {
         // snapshot is best-effort

@@ -369,4 +369,39 @@ describe("enrichPomsForJourneys journey method names", () => {
     assert.match(content, /async enterPassword\(/);
     assert.match(content, /input\[type="password"\]/);
   });
+
+  it("generates post-login assert methods with explicit URL/status checks", async () => {
+    const loginCatalog: LocatorCatalog = {
+      generatedAt: "2026-09-16T00:00:00.000Z",
+      locators: [],
+    };
+    const journeys: Journey[] = [
+      {
+        id: "login-success",
+        name: "Login success",
+        gherkinText: "Scenario: login",
+        steps: [
+          {
+            step: 1,
+            action: "assert_state",
+            pom: "LoginPagePage",
+            method: "assertRedirectToDashboard",
+          },
+          {
+            step: 2,
+            action: "assert_visible",
+            pom: "LoginPagePage",
+            method: "assertLoginSuccessVisible",
+          },
+        ],
+      },
+    ];
+    await enrichPomsForJourneys(journeys, pomsDir, loginCatalog);
+    const content = await readFile(
+      path.join(pomsDir, "LoginPagePage.ts"),
+      "utf8",
+    );
+    assert.match(content, /toHaveURL\(\/dashboard/i);
+    assert.match(content, /getByRole\('status'\)/);
+  });
 });

@@ -24,6 +24,7 @@ import { pool } from "../db/pool.js";
 import { getProject } from "./project-service.js";
 import type { E2eAuthConfig, Project } from "@monday/agent-core";
 import { mergeExecuteProgress } from "./pipeline-progress.js";
+import { publishRunEvent } from "../ws/hub.js";
 import {
   cleanupDownstreamArtifacts,
   downstreamDeletesExecutionReport,
@@ -720,6 +721,11 @@ export async function cancelPipeline(runId: string): Promise<void> {
     WHERE id = $1`,
     [runId],
   );
+
+  await publishRunEvent(runId, {
+    status: "cancelled",
+    currentAgent: null,
+  });
 }
 
 const ARTIFACT_JSON_FILES: Record<string, string> = {
