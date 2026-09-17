@@ -40,6 +40,7 @@ export interface UsePipelineWebSocketOptions {
   ) => void;
   onExecutionFinished?: (status: "completed" | "failed", error?: string) => void;
   onRunCancelled?: () => void;
+  onAgentFailed?: (agent: string, error?: string) => void;
 }
 
 export function usePipelineWebSocket(
@@ -58,6 +59,8 @@ export function usePipelineWebSocket(
   onExecutionFinishedRef.current = options.onExecutionFinished;
   const onRunCancelledRef = useRef(options.onRunCancelled);
   onRunCancelledRef.current = options.onRunCancelled;
+  const onAgentFailedRef = useRef(options.onAgentFailed);
+  onAgentFailedRef.current = options.onAgentFailed;
   const executeAfterGenerateRef = useRef(options.executeAfterGenerate ?? true);
   executeAfterGenerateRef.current = options.executeAfterGenerate ?? true;
   const executeOnlyRef = useRef(options.executeOnly ?? false);
@@ -236,6 +239,8 @@ export function usePipelineWebSocket(
         }
 
         if (agent && status === "failed") {
+          const err = (msg as { error?: string }).error;
+          onAgentFailedRef.current?.(agent, err);
           setProgress((prev) => ({
             status: "failed",
             currentAgent: null,
@@ -243,7 +248,7 @@ export function usePipelineWebSocket(
               ? prev.completedAgents
               : [...completedRef.current],
             artifactRoot: msg.artifactRoot ?? prev?.artifactRoot,
-            error: (msg as { error?: string }).error,
+            error: err,
             executeAfterGenerate: executeAfterGenerateRef.current,
             skippedAgents: prev?.skippedAgents ?? [],
           }));

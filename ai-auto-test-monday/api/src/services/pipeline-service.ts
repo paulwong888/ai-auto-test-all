@@ -1018,7 +1018,6 @@ export async function listArtifactsFromIndex(
     const available = isTextArtifact
       ? await artifactExists(prefix, mapped.key)
       : true;
-    if (!available) continue;
 
     items.push({
       ...mapped,
@@ -1028,7 +1027,37 @@ export async function listArtifactsFromIndex(
       available,
     });
   }
+
+  mergeStoreFilesIntoIndex(items, seen, await listArtifactFilesFromStore(prefix));
   return items;
+}
+
+/** @internal Merge store-only artifacts into index list; upgrade availability when store catches up. */
+export function mergeStoreFilesIntoIndex(
+  items: ArtifactIndexEntry[],
+  seen: Set<string>,
+  storeFiles: Array<{ key: string; label: string; kind: "json" | "text" }>,
+): void {
+  for (const file of storeFiles) {
+    if (seen.has(file.key)) {
+      const existing = items.find((item) => item.key === file.key);
+      if (existing && !existing.available) {
+        existing.available = true;
+      }
+      continue;
+    }
+    seen.add(file.key);
+    items.push({
+      ...file,
+      agent: "",
+      artifactType: file.key.startsWith("spec-")
+        ? "spec"
+        : file.key.startsWith("pom-")
+          ? "pom"
+          : file.key,
+      available: true,
+    });
+  }
 }
 
 export async function listRuns(projectId?: string): Promise<unknown[]> {

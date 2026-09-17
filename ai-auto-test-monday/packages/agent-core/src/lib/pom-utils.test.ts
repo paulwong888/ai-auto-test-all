@@ -404,4 +404,46 @@ describe("enrichPomsForJourneys journey method names", () => {
     assert.match(content, /toHaveURL\(\/dashboard/i);
     assert.match(content, /getByRole\('status'\)/);
   });
+
+  it("adds submitLogin via login component when page POM has no button", async () => {
+    const catalog: LocatorCatalog = {
+      generatedAt: "2026-09-17T00:00:00.000Z",
+      locators: [
+        {
+          component: "HomeFinance",
+          element: "table",
+          testId: "HomeFinance-table",
+          priority: ["page.getByTestId('HomeFinance-table')"],
+        },
+        {
+          component: "LoginPage",
+          element: "submitButton",
+          testId: "LoginPage-submit",
+          priority: ["page.getByTestId('LoginPage-submit')"],
+        },
+      ],
+    };
+    const journeys: Journey[] = [
+      {
+        id: "login-and-view-dashboard",
+        name: "Login",
+        gherkinText: "Scenario: login",
+        steps: [
+          {
+            step: 1,
+            action: "interact",
+            pom: "HomeFinancePage",
+            method: "submitLogin",
+          },
+        ],
+      },
+    ];
+    await enrichPomsForJourneys(journeys, pomsDir, catalog);
+    const content = await readFile(
+      path.join(pomsDir, "HomeFinancePage.ts"),
+      "utf8",
+    );
+    assert.match(content, /async submitLogin\(/);
+    assert.match(content, /LoginPage-submit/);
+  });
 });

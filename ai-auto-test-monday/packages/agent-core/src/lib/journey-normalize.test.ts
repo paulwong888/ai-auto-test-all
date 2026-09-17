@@ -6,6 +6,7 @@ import {
   injectE2eCredentials,
   isPublicHomeModel,
   normalizeJourneysForExecution,
+  normalizeLoginCredentialSteps,
   normalizeLoginHappyPathJourney,
   normalizePermissionBoundaryJourney,
 } from "./journey-normalize.js";
@@ -171,5 +172,32 @@ describe("journey-normalize", () => {
     });
     assert.equal(fixed[0]?.steps[1]?.args?.[0], "admin");
     assert.equal(fixed[0]?.steps[4]?.method, "assertRedirectToDashboard");
+  });
+
+  it("rebinds login credential steps from wrong POM to LoginPage", () => {
+    const journey: Journey = {
+      id: "login-and-view-dashboard",
+      name: "Login and view dashboard",
+      category: "Happy Path",
+      gherkinText: "Scenario: login",
+      steps: [
+        {
+          step: 1,
+          action: "interact",
+          pom: "HomeFinancePage",
+          method: "enterUsername",
+          args: ["user"],
+        },
+        {
+          step: 2,
+          action: "interact",
+          pom: "HomeFinancePage",
+          method: "submitLogin",
+        },
+      ],
+    };
+    const fixed = normalizeLoginCredentialSteps(journey, demoRegistry);
+    assert.equal(fixed.steps[0]?.pom, "LoginPagePage");
+    assert.equal(fixed.steps[1]?.pom, "LoginPagePage");
   });
 });

@@ -121,6 +121,32 @@ export function injectE2eCredentials(
   }));
 }
 
+const LOGIN_CREDENTIAL_METHODS = new Set([
+  "enterUsername",
+  "enterPassword",
+  "submitLogin",
+  "assertLoginSuccessVisible",
+  "assertRedirectToDashboard",
+  "assertFormVisible",
+]);
+
+/** Rebind login credential steps to the registry Login POM when choreographer picked the wrong page. */
+export function normalizeLoginCredentialSteps(
+  journey: Journey,
+  registry: ComponentRegistry,
+): Journey {
+  const loginPom = loginPomClass(registry);
+  let changed = false;
+  const steps = journey.steps.map((step) => {
+    if (LOGIN_CREDENTIAL_METHODS.has(step.method) && step.pom !== loginPom) {
+      changed = true;
+      return { ...step, pom: loginPom };
+    }
+    return step;
+  });
+  return changed ? { ...journey, steps } : journey;
+}
+
 export function normalizeLoginHappyPathJourney(
   journey: Journey,
   registry: ComponentRegistry,
@@ -317,6 +343,7 @@ export function normalizeJourneysForExecution(
     normalizePermissionBoundaryJourney(j, opts.registry, opts.targetUrl),
   );
   result = result.map((j) => normalizeLoginHappyPathJourney(j, opts.registry));
+  result = result.map((j) => normalizeLoginCredentialSteps(j, opts.registry));
   result = injectE2eCredentials(result, opts.e2eAuth, opts.registry);
   return result;
 }

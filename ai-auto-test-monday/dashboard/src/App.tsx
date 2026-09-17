@@ -287,8 +287,14 @@ export default function App() {
       const hasReport = listData?.files?.some(
         (f: { key: string }) => f.key === "execution-report",
       );
+      const firstSpec = listData?.files?.find(
+        (f: { key: string; available?: boolean }) =>
+          f.key.startsWith("spec-") && f.available !== false,
+      );
       if (progressStatus === "completed") {
-        void loadArtifact(hasReport ? "execution-report" : "journeys", id);
+        if (hasReport) void loadArtifact("execution-report", id);
+        else if (firstSpec) void loadArtifact(firstSpec.key, id);
+        else void loadArtifact("journeys", id);
       } else if (
         progressStatus === "failed" &&
         (hasReport || execStatus === "failed")
@@ -306,11 +312,27 @@ export default function App() {
       if (agent === "choreographer") {
         void loadArtifact("journeys", runId);
       }
+      if (agent === "assistantDirector") {
+        const tryPreviewFirstSpec = async () => {
+          if (executeAfterGenerate) return;
+          const listData = await loadArtifactList(runId);
+          const firstSpec = listData?.files?.find(
+            (f: { key: string; available?: boolean }) =>
+              f.key.startsWith("spec-") && f.available !== false,
+          );
+          if (firstSpec) void loadArtifact(firstSpec.key, runId);
+        };
+        void tryPreviewFirstSpec();
+        setTimeout(() => void loadArtifactList(runId), 500);
+        setTimeout(() => void tryPreviewFirstSpec(), 500);
+        setTimeout(() => void loadArtifactList(runId), 1500);
+        setTimeout(() => void tryPreviewFirstSpec(), 1500);
+      }
       if (agent === "continuityLead") {
         void loadArtifact("execution-report", runId);
       }
     },
-    [runId, loadArtifact, loadArtifactList],
+    [runId, loadArtifact, loadArtifactList, executeAfterGenerate],
   );
 
   const onRunTerminal = useCallback(
@@ -422,6 +444,11 @@ export default function App() {
       onRunSnapshot,
       onExecutionFinished: handleExecutionFinished,
       onRunCancelled: handleRunCancelled,
+      onAgentFailed: (_agent, error) => {
+        if (runId) {
+          void onRunTerminal(runId, "failed", error ?? "failed");
+        }
+      },
     },
   );
 
@@ -919,6 +946,8 @@ export default function App() {
   function renderLink(a: ArtifactLink) {
     const ready = isArtifactReady(a.agent) && a.available !== false;
     const generating = stepStatus(a.agent) === "active";
+    const syncing =
+      a.available === false && isArtifactReady(a.agent) && !generating;
     const active = activeArtifactKey === a.key;
     return (
       <a
@@ -934,7 +963,7 @@ export default function App() {
         }}
       >
         {a.label}
-        {generating ? " (生成中…)" : ""}
+        {generating ? " (生成中…)" : syncing ? " (同步中…)" : ""}
       </a>
     );
   }

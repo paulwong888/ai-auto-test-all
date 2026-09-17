@@ -279,11 +279,32 @@ function methodBodyForStep(
 
   if (method === "submitLogin") {
     const buttonLoc = findButtonLoc(locs);
-    if (!buttonLoc) return null;
-    const prop = toPropName(buttonLoc.element);
+    if (buttonLoc) {
+      const prop = toPropName(buttonLoc.element);
+      return [
+        "  async submitLogin(): Promise<void> {",
+        `    await this.${prop}.click();`,
+        "  }",
+      ].join("\n");
+    }
+    const loginComponent = locators.find((l) => /login/i.test(l.component))
+      ?.component;
+    if (loginComponent) {
+      const loginButton = findButtonLoc(
+        locators.filter((l) => l.component === loginComponent),
+      );
+      if (loginButton) {
+        const expr = pickLocatorExpr(loginButton);
+        return [
+          "  async submitLogin(): Promise<void> {",
+          `    await ${expr}.click();`,
+          "  }",
+        ].join("\n");
+      }
+    }
     return [
       "  async submitLogin(): Promise<void> {",
-      `    await this.${prop}.click();`,
+      "    await this.page.getByRole('button', { name: /login|sign in|submit|登录/i }).first().click();",
       "  }",
     ].join("\n");
   }

@@ -358,9 +358,12 @@ export async function runAssistantDirector(
     }
 
     if (mismatches.length > 0) {
-      preflightFailures.push(
-        `${journey.id}: ${mismatches.slice(0, 5).join(", ")}`,
-      );
+      const journeyMissing = findMissingJourneyMethods(journey, pomMethods);
+      const detail =
+        journeyMissing.length > 0
+          ? `journey step missing POM method: ${journeyMissing.slice(0, 3).join(", ")}`
+          : `spec references missing method: ${mismatches.slice(0, 3).join(", ")}`;
+      preflightFailures.push(`${journey.id}: ${detail}`);
     }
 
     specs.push({

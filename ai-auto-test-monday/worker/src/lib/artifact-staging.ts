@@ -18,18 +18,23 @@ export function runArtifactPrefix(input: PipelineInput): string {
   );
 }
 
+export interface StagingContext {
+  flush: () => Promise<void>;
+}
+
 export async function withArtifactStaging<T>(
   input: PipelineInput,
-  run: (localInput: PipelineInput) => Promise<T>,
+  run: (localInput: PipelineInput, staging: StagingContext) => Promise<T>,
 ): Promise<T> {
   const store = getArtifactStore();
   const prefix = runArtifactPrefix(input);
   const localRoot = path.join(os.tmpdir(), "monday-artifacts", input.runId);
   await pullToLocal(store, prefix, localRoot);
+  const flush = () => pushFromLocal(store, prefix, localRoot);
   try {
-    return await run({ ...input, artifactRoot: localRoot });
+    return await run({ ...input, artifactRoot: localRoot }, { flush });
   } finally {
-    await pushFromLocal(store, prefix, localRoot);
+    await flush();
     await removeLocalStaging(localRoot);
   }
 }

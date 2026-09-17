@@ -9,15 +9,36 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
-if [[ $# -gt 0 ]]; then
-  echo "[rebuild-restart] 构建并重新部署: $*"
-  docker compose --env-file .env up -d --build --force-recreate "$@"
+WORKER_SCALE="${WORKER_SCALE:-3}"
+# shellcheck disable=SC1091
+set -a && source .env && set +a
+WORKER_SCALE="${WORKER_SCALE:-3}"
+
+scale_worker_args=()
+should_scale_worker=false
+if [[ $# -eq 0 ]]; then
+  should_scale_worker=true
 else
-  echo "[rebuild-restart] 构建并重新部署全部服务..."
-  docker compose --env-file .env up -d --build --force-recreate
+  for svc in "$@"; do
+    if [[ "$svc" == "worker" ]]; then
+      should_scale_worker=true
+      break
+    fi
+  done
+fi
+if [[ "$should_scale_worker" == true ]]; then
+  scale_worker_args=(--scale "worker=${WORKER_SCALE}")
+fi
+
+if [[ $# -gt 0 ]]; then
+  echo "[rebuild-restart] 构建并重新部署: $* (worker scale=${WORKER_SCALE})"
+  docker compose --env-file .env up -d --build --force-recreate "${scale_worker_args[@]}" "$@"
+else
+  echo "[rebuild-restart] 构建并重新部署全部服务... (worker scale=${WORKER_SCALE})"
+  docker compose --env-file .env up -d --build --force-recreate "${scale_worker_args[@]}"
 fi
 
 echo "[rebuild-restart] Dashboard http://localhost:${DASHBOARD_PORT:-8040}"
 echo "[rebuild-restart] API       http://localhost:${API_PORT:-3010}/health"
-echo "[rebuild-restart] 多 worker: docker compose --env-file .env up -d --scale worker=3"
+echo "[rebuild-restart] Workers   scale=${WORKER_SCALE}"
 echo "[rebuild-restart] 完成"

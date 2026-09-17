@@ -22,7 +22,11 @@ import {
   type JourneysDocument,
 } from "@monday/agent-core";
 import { publishProgress } from "../lib/redis.js";
-import { withArtifactStaging, runArtifactPrefix } from "../lib/artifact-staging.js";
+import {
+  withArtifactStaging,
+  runArtifactPrefix,
+  type StagingContext,
+} from "../lib/artifact-staging.js";
 import {
   clearRunCurrentAgent,
   finalizeRunStatus,
@@ -63,6 +67,39 @@ async function notify(
   });
 }
 
+async function runGenerationAgent(
+  input: PipelineInput,
+  agent: string,
+  impl: () => Promise<void>,
+  staging?: StagingContext,
+): Promise<void> {
+  console.info(`[${agent}] start runId=${input.runId}`);
+  await notify(input, agent, "started");
+  try {
+    await impl();
+    if (staging) await staging.flush();
+    console.info(`[${agent}] end runId=${input.runId} status=ok`);
+    await notify(input, agent, "completed");
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    if (error.includes("cancelled")) {
+      console.info(`[${agent}] end runId=${input.runId} status=cancelled`);
+      throw err;
+    }
+    console.error(
+      `[${agent}] end runId=${input.runId} status=failed error=${error}`,
+    );
+    await publishProgress(input.runId, {
+      agent,
+      status: "failed",
+      artifactRoot: input.artifactRoot,
+      error,
+    });
+    await finalizeRunStatus(input.runId, "failed", error);
+    throw err;
+  }
+}
+
 async function readRegistry(root: string): Promise<ComponentRegistry> {
   const raw = await readFile(path.join(root, "component-registry.json"), "utf8");
   return JSON.parse(raw) as ComponentRegistry;
@@ -75,7 +112,6 @@ async function readInjections(root: string): Promise<TestIdInjections> {
 
 async function scriptAnalystImpl(input: PipelineInput): Promise<void> {
   throwIfCancelled();
-  await notify(input, "scriptAnalyst", "started");
 
   const registry = await runScriptAnalyst({
     projectId: input.projectId,
@@ -90,16 +126,16 @@ async function scriptAnalystImpl(input: PipelineInput): Promise<void> {
   });
 
   throwIfCancelled();
-  await notify(input, "scriptAnalyst", "completed");
 }
 
 export async function scriptAnalyst(input: PipelineInput): Promise<void> {
-  return withArtifactStaging(input, scriptAnalystImpl);
+  return withArtifactStaging(input, (inp, staging) =>
+    runGenerationAgent(inp, "scriptAnalyst", () => scriptAnalystImpl(inp), staging),
+  );
 }
 
 async function stageManagerImpl(input: PipelineInput): Promise<void> {
   throwIfCancelled();
-  await notify(input, "stageManager", "started");
 
   const registry = await readRegistry(input.artifactRoot);
   const apply = input.applyTestIds === true;
@@ -131,16 +167,16 @@ async function stageManagerImpl(input: PipelineInput): Promise<void> {
   }
 
   throwIfCancelled();
-  await notify(input, "stageManager", "completed");
 }
 
 export async function stageManager(input: PipelineInput): Promise<void> {
-  return withArtifactStaging(input, stageManagerImpl);
+  return withArtifactStaging(input, (inp, staging) =>
+    runGenerationAgent(inp, "stageManager", () => stageManagerImpl(inp), staging),
+  );
 }
 
 async function blockingCoachImpl(input: PipelineInput): Promise<void> {
   throwIfCancelled();
-  await notify(input, "blockingCoach", "started");
 
   const registry = await readRegistry(input.artifactRoot);
   const injections = await readInjections(input.artifactRoot);
@@ -153,16 +189,16 @@ async function blockingCoachImpl(input: PipelineInput): Promise<void> {
   });
 
   throwIfCancelled();
-  await notify(input, "blockingCoach", "completed");
 }
 
 export async function blockingCoach(input: PipelineInput): Promise<void> {
-  return withArtifactStaging(input, blockingCoachImpl);
+  return withArtifactStaging(input, (inp, staging) =>
+    runGenerationAgent(inp, "blockingCoach", () => blockingCoachImpl(inp), staging),
+  );
 }
 
 async function setDesignerImpl(input: PipelineInput): Promise<void> {
   throwIfCancelled();
-  await notify(input, "setDesigner", "started");
 
   const registry = await readRegistry(input.artifactRoot);
   const catalogRaw = await readFile(
@@ -190,62 +226,51 @@ async function setDesignerImpl(input: PipelineInput): Promise<void> {
   }
 
   throwIfCancelled();
-  await notify(input, "setDesigner", "completed");
 }
 
 export async function setDesigner(input: PipelineInput): Promise<void> {
-  return withArtifactStaging(input, setDesignerImpl);
+  return withArtifactStaging(input, (inp, staging) =>
+    runGenerationAgent(inp, "setDesigner", () => setDesignerImpl(inp), staging),
+  );
 }
 
 async function choreographerImpl(input: PipelineInput): Promise<void> {
   throwIfCancelled();
-  await notify(input, "choreographer", "started");
 
   const registry = await readRegistry(input.artifactRoot);
   const pomDir = path.join(input.artifactRoot, "poms");
   const availablePoms = await resolveAvailablePomsFromDir(pomDir);
   console.info(
-    `[choreographer] start runId=${input.runId} availablePoms=${availablePoms.join(", ")}`,
+    `[choreographer] availablePoms=${availablePoms.join(", ")} runId=${input.runId}`,
   );
 
-  try {
-    const doc = await runChoreographer({
-      registry,
-      targetUrl: input.targetUrl,
-      availablePoms,
-    });
+  const doc = await runChoreographer({
+    registry,
+    targetUrl: input.targetUrl,
+    availablePoms,
+  });
 
-    console.info(
-      `[choreographer] done runId=${input.runId} journeyCount=${doc.journeys.length}`,
-    );
+  console.info(
+    `[choreographer] journeyCount=${doc.journeys.length} runId=${input.runId}`,
+  );
 
-    const out = path.join(input.artifactRoot, "journeys.json");
-    await writeJson(out, doc);
-    await insertArtifactIndex(input.runId, "choreographer", "journeys", relKey(input, out), {
-      journeyCount: doc.journeys.length,
-    });
+  const out = path.join(input.artifactRoot, "journeys.json");
+  await writeJson(out, doc);
+  await insertArtifactIndex(input.runId, "choreographer", "journeys", relKey(input, out), {
+    journeyCount: doc.journeys.length,
+  });
 
-    throwIfCancelled();
-    await notify(input, "choreographer", "completed");
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    await publishProgress(input.runId, {
-      agent: "choreographer",
-      status: "failed",
-      artifactRoot: input.artifactRoot,
-      error,
-    });
-    throw err;
-  }
+  throwIfCancelled();
 }
 
 export async function choreographer(input: PipelineInput): Promise<void> {
-  return withArtifactStaging(input, choreographerImpl);
+  return withArtifactStaging(input, (inp, staging) =>
+    runGenerationAgent(inp, "choreographer", () => choreographerImpl(inp), staging),
+  );
 }
 
 async function assistantDirectorImpl(input: PipelineInput): Promise<void> {
   throwIfCancelled();
-  await notify(input, "assistantDirector", "started");
 
   const journeysRaw = await readFile(
     path.join(input.artifactRoot, "journeys.json"),
@@ -299,14 +324,20 @@ async function assistantDirectorImpl(input: PipelineInput): Promise<void> {
   }
 
   throwIfCancelled();
-  await notify(input, "assistantDirector", "completed");
   if (input.executeAfterGenerate === false) {
     await finalizeRunStatus(input.runId, "completed");
   }
 }
 
 export async function assistantDirector(input: PipelineInput): Promise<void> {
-  return withArtifactStaging(input, assistantDirectorImpl);
+  return withArtifactStaging(input, (inp, staging) =>
+    runGenerationAgent(
+      inp,
+      "assistantDirector",
+      () => assistantDirectorImpl(inp),
+      staging,
+    ),
+  );
 }
 
 export interface ContinuityLeadResult {
@@ -317,6 +348,7 @@ export interface ContinuityLeadResult {
 
 async function continuityLeadImpl(
   input: PipelineInput,
+  staging: StagingContext,
 ): Promise<ContinuityLeadResult> {
   throwIfCancelled();
   await updateExecutionStatus(
@@ -364,6 +396,9 @@ async function continuityLeadImpl(
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     if (error.includes("cancelled")) {
+      console.info(
+        `[continuityLead] end runId=${input.runId} status=cancelled`,
+      );
       await updateExecutionStatus(input.runId, null, input.executionMode);
       await clearRunCurrentAgent(input.runId);
       await finalizeRunStatus(input.runId, "cancelled");
@@ -398,9 +433,13 @@ async function continuityLeadImpl(
         failed: report.summary.failed,
       },
     );
+    console.error(
+      `[continuityLead] end runId=${input.runId} status=failed error=${error}`,
+    );
     await updateExecutionStatus(input.runId, "failed", input.executionMode);
     await clearRunCurrentAgent(input.runId);
     await finalizeRunStatus(input.runId, "failed", error);
+    await staging.flush();
     await publishProgress(input.runId, {
       agent: "continuityLead",
       status: "execution-failed",
@@ -432,6 +471,7 @@ async function continuityLeadImpl(
       ? `${report.summary.failed} journey(s) failed`
       : null,
   );
+  await staging.flush();
   await notify(input, "continuityLead", "completed");
   await publishProgress(input.runId, {
     agent: "continuityLead",
@@ -445,7 +485,7 @@ async function continuityLeadImpl(
   });
 
   console.info(
-    `[continuityLead] done runId=${input.runId} mode=${report.executionMode} passed=${report.summary.passed} failed=${report.summary.failed} flaky=${report.summary.flaky ?? 0} skipped=${report.summary.skipped}`,
+    `[continuityLead] end runId=${input.runId} status=ok mode=${report.executionMode} passed=${report.summary.passed} failed=${report.summary.failed} flaky=${report.summary.flaky ?? 0} skipped=${report.summary.skipped}`,
   );
 
   return {
@@ -458,5 +498,7 @@ async function continuityLeadImpl(
 export async function continuityLead(
   input: PipelineInput,
 ): Promise<ContinuityLeadResult> {
-  return withArtifactStaging(input, continuityLeadImpl);
+  return withArtifactStaging(input, (inp, staging) =>
+    continuityLeadImpl(inp, staging),
+  );
 }
