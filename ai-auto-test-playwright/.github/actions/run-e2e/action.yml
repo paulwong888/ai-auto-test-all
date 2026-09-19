@@ -1,0 +1,33 @@
+name: Run E2E on Platform
+description: Trigger ci preset run via webhook and poll until complete
+inputs:
+  platform_url:
+    description: Platform API base URL
+    required: true
+  api_token:
+    description: Project-scoped API token with run scope
+    required: true
+  project_id:
+    description: Project UUID
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        RESP=$(curl -sf -X POST "${{ inputs.platform_url }}/api/webhooks/ci/run" \
+          -H "Authorization: Bearer ${{ inputs.api_token }}" \
+          -H "Content-Type: application/json" \
+          -d "{\"projectId\":\"${{ inputs.project_id }}\",\"preset\":\"ci\"}")
+        RUN_ID=$(echo "$RESP" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runId"])')
+        echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+        for _ in $(seq 1 60); do
+          STATUS=$(curl -sf "${{ inputs.platform_url }}/api/projects/${{ inputs.project_id }}/runs/$RUN_ID" \
+            -H "Authorization: Bearer ${{ inputs.api_token }}" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["status"])')
+          if [ "$STATUS" = "passed" ]; then exit 0; fi
+          if [ "$STATUS" != "running" ] && [ "$STATUS" != "pending" ]; then exit 1; fi
+          sleep 10
+        done
+        exit 1

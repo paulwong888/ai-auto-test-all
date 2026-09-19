@@ -1,0 +1,35 @@
+{
+  "name": "server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "bullmq": "^5.34.0",
+    "cors": "^2.8.5",
+    "diff": "^8.0.3",
+    "dockerode": "^4.0.2",
+    "express": "^5.1.0",
+    "ioredis": "^5.4.2",
+    "multer": "^2.4.0",
+    "pg": "^8.23.0",
+    "ws": "^8.21.3",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^22.15.21",
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+test-results/
+fixtures/auth.json
+report.html

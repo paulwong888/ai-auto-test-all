@@ -1,0 +1,6 @@
+{
+  "defaultProvider": "dashscope",
+  "defaultModel": "__PI_MODEL__",
+  "enableSkillCommands": true,
+  "skills": ["/etc/pi-agent/skills"]
+}

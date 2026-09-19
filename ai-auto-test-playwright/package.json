@@ -1,0 +1,17 @@
+{
+  "name": "ai-auto-test-playwright",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "server",
+    "dashboard"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w server",
+    "dev:dashboard": "npm run dev -w dashboard",
+    "build": "npm run build -w server && npm run build -w dashboard",
+    "start": "npm run start -w server",
+    "docker:up": "cd docker && docker compose up --build",
+    "docker:down": "cd docker && docker compose down"
+  }
+}
