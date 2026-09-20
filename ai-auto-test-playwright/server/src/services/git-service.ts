@@ -5,12 +5,21 @@ import { promisify } from "node:util";
 import { query } from "../db/pool.js";
 import { AppError } from "../errors.js";
 import { decryptSecret, encryptSecret } from "../utils/credential-crypto.js";
+import type { ProjectTemplateService } from "./project-template-service.js";
 
 const execFileAsync = promisify(execFile);
 
 async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", args, { cwd, maxBuffer: 10 * 1024 * 1024 });
+  const { stdout } = await execFileAsync("git", args, {
+    cwd,
+    maxBuffer: 10 * 1024 * 1024,
+    env: process.env,
+  });
   return stdout.trim();
+}
+
+function isSshRepoUrl(repoUrl: string): boolean {
+  return repoUrl.startsWith("git@") || repoUrl.startsWith("ssh://");
 }
 
 function authUrl(repoUrl: string, token: string): string {
@@ -20,10 +29,23 @@ function authUrl(repoUrl: string, token: string): string {
   return u.toString();
 }
 
+function resolveRemoteUrl(repoUrl: string, token: string): string {
+  if (isSshRepoUrl(repoUrl)) return repoUrl;
+  if (!token) {
+    throw new AppError("GIT_TOKEN_REQUIRED", "HTTPS repository requires a token", 422);
+  }
+  return authUrl(repoUrl, token);
+}
+
 const BLOCKED_PATTERNS = [/auth\.json$/i, /\.venv\//, /node_modules\//];
 
 export class GitService {
+  constructor(private readonly templateService?: ProjectTemplateService) {}
+
   async bindRepo(projectId: string, repoUrl: string, token: string, defaultBranch = "main") {
+    if (!repoUrl) {
+      throw new AppError("GIT_REPO_REQUIRED", "repoUrl is required", 422);
+    }
     await query(
       `INSERT INTO git_bindings (project_id, repo_url, default_branch, encrypted_token, updated_at)
        VALUES ($1,$2,$3,$4,NOW())
@@ -54,27 +76,40 @@ export class GitService {
     };
   }
 
-  async sync(workspacePath: string, projectId: string): Promise<void> {
+  async sync(workspacePath: string, projectId: string, baseUrl: string): Promise<void> {
     const binding = await this.getBinding(projectId);
     if (!binding) {
       throw new AppError("GIT_NOT_BOUND", "Git repository not bound", 422);
     }
     const token = decryptSecret(binding.encryptedToken);
-    const url = authUrl(binding.repoUrl, token);
+    const url = resolveRemoteUrl(binding.repoUrl, token);
     const gitDir = path.join(workspacePath, ".git");
     const hasGit = await fs.access(gitDir).then(() => true).catch(() => false);
     if (!hasGit) {
-      await execFileAsync("git", ["clone", url, workspacePath], { maxBuffer: 10 * 1024 * 1024 });
+      await fs.mkdir(path.dirname(workspacePath), { recursive: true }).catch(() => undefined);
+      const entries = await fs.readdir(workspacePath).catch(() => [] as string[]);
+      if (entries.length > 0) {
+        throw new AppError("GIT_WORKSPACE_NOT_EMPTY", "Workspace must be empty before git clone", 422);
+      }
+      await execFileAsync("git", ["clone", url, workspacePath], {
+        maxBuffer: 10 * 1024 * 1024,
+        env: process.env,
+      });
     } else {
       await git(workspacePath, ["remote", "set-url", "origin", url]);
       await git(workspacePath, ["fetch", "origin"]);
       await git(workspacePath, ["checkout", binding.defaultBranch]).catch(() => undefined);
       await git(workspacePath, ["pull", "origin", binding.defaultBranch]).catch(() => undefined);
     }
+
     const testsDir = path.join(workspacePath, "tests");
-    await fs.access(testsDir).catch(async () => {
-      throw new AppError("TESTS_MISSING", "Cloned repo missing tests/ directory", 422);
-    });
+    const hasTests = await fs.access(testsDir).then(() => true).catch(() => false);
+    if (!hasTests) {
+      if (!this.templateService) {
+        throw new AppError("TESTS_MISSING", "Cloned repo missing tests/ directory", 422);
+      }
+      await this.templateService.initTemplate(workspacePath, baseUrl);
+    }
   }
 
   async push(workspacePath: string, projectId: string, message: string): Promise<{ branch: string }> {
@@ -82,6 +117,9 @@ export class GitService {
     if (!binding) throw new AppError("GIT_NOT_BOUND", "Git not bound", 422);
 
     const status = await git(workspacePath, ["status", "--porcelain", "tests/"]);
+    if (!status.trim()) {
+      throw new AppError("GIT_NOTHING_TO_COMMIT", "No changes under tests/ to commit", 422);
+    }
     for (const line of status.split("\n")) {
       const file = line.slice(3).trim();
       if (BLOCKED_PATTERNS.some((re) => re.test(file))) {
@@ -90,11 +128,14 @@ export class GitService {
     }
 
     const branch = `e2e/${Date.now()}`;
+    await git(workspacePath, ["config", "user.email", "e2e@ai-auto-test.local"]);
+    await git(workspacePath, ["config", "user.name", "ai-auto-test-playwright"]);
     await git(workspacePath, ["checkout", "-b", branch]);
     await git(workspacePath, ["add", "tests/"]);
     await git(workspacePath, ["commit", "-m", message]);
     const token = decryptSecret(binding.encryptedToken);
-    await git(workspacePath, ["remote", "set-url", "origin", authUrl(binding.repoUrl, token)]);
+    const remoteUrl = resolveRemoteUrl(binding.repoUrl, token);
+    await git(workspacePath, ["remote", "set-url", "origin", remoteUrl]);
     await git(workspacePath, ["push", "-u", "origin", branch]);
     return { branch };
   }
@@ -103,6 +144,9 @@ export class GitService {
     const binding = await this.getBinding(projectId);
     if (!binding) throw new AppError("GIT_NOT_BOUND", "Git not bound", 422);
     const token = decryptSecret(binding.encryptedToken);
+    if (!token) {
+      throw new AppError("PR_TOKEN_REQUIRED", "PR creation requires an HTTPS token", 422);
+    }
     const match = binding.repoUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
     if (!match) {
       throw new AppError("PR_UNSUPPORTED", "PR creation only supported for GitHub repos", 422);

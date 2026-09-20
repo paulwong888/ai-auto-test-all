@@ -75,9 +75,11 @@ services:
       ALLOWED_REPO_PREFIXES: ${ALLOWED_REPO_PREFIXES:-/data/projects}
       PROJECTS_DATA_PATH: ${PROJECTS_DATA_PATH:-/data/projects}
       PROJECTS_DATA_HOST_PATH: ${PROJECTS_DATA_HOST_PATH:-./data/projects}
+      GIT_SSH_COMMAND: ${GIT_SSH_COMMAND:-ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes}
     volumes:
       - ${PROJECTS_DATA_HOST_PATH:-./data/projects}:/data/projects
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${SSH_DIR:-${HOME}/.ssh}:/root/.ssh:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

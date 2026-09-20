@@ -130,6 +130,7 @@ export class RunService {
       preset: resolved.preset,
       failedNodeIds: [],
       parentRunId,
+      triggerSource: options.triggerSource ?? "web",
       startedAt: now,
       finishedAt: null,
       createdAt: now,

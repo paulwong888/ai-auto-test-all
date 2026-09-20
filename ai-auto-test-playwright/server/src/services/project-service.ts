@@ -53,6 +53,11 @@ export class ProjectService {
     return Promise.all(records.map((record) => this.toProject(record.id)));
   }
 
+  async listForUser(userId: string): Promise<Project[]> {
+    const records = await this.projects.findByUserId(userId);
+    return Promise.all(records.map((record) => this.toProject(record.id)));
+  }
+
   async getById(id: string): Promise<Project | null> {
     const record = await this.projects.findById(id);
     if (!record) return null;

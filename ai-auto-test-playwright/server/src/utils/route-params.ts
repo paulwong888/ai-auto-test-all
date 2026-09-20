@@ -1,0 +1,15 @@
+import type { Request } from "express";
+
+export function paramString(value: string | string[] | undefined): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value[0] ?? "";
+  return "";
+}
+
+export function projectIdFromRequest(req: Request): string {
+  const id = paramString(req.params.id);
+  if (!id) {
+    throw new Error("Missing project id");
+  }
+  return id;
+}

@@ -123,6 +123,12 @@ export function ProjectOverviewPage() {
               <Link to={`/projects/${id}/run`} className="px-4 py-2 rounded border border-slate-600 text-sm hover:bg-slate-800">
                 去执行
               </Link>
+              <Link
+                to={`/projects/${id}/settings/members`}
+                className="px-4 py-2 rounded border border-slate-600 text-sm hover:bg-slate-800"
+              >
+                成员
+              </Link>
             </>
           )}
         </div>

@@ -23,7 +23,9 @@
 | demo-saucedemo.sh (ci) | ✅ | 102s，15 passed |
 | demo-saucedemo.sh (debug) | ✅ | 137s，15 passed |
 | demo-phase2.sh | ✅ | Wave 1 全量验收，退出码 0，~6min（CI ~91s） |
-| demo-phase3.sh | ✅ | 退出码 0（仅 health + MVP + Phase2 回归，**非** PRD Phase3 §8） |
+| demo-git-ci.sh | ✅ | Wave 3：SSH push + webhook CI + token scope，~2min |
+| demo-rbac.sh | ✅ | Wave 4：AUTH on，viewer 403 / editor 202 / audit |
+| demo-phase3.sh | ✅ | Wave 3：含 git-ci + recording 回归 |
 
 ---
 
@@ -80,15 +82,15 @@
 | 1 | Web noVNC → stop → recorded.py | ✅ | Wave 2：`demo-recording.sh` curl E2E；VNC 经 server 反向代理 `host.docker.internal:${vncPort}`；RecordPage「Web 录制」Tab + iframe |
 | 2 | 3 Worker 并行 3 project | ⏭️ | compose 仅 1 worker |
 | 3 | 同 project 两 run 排队 | ⏭️ | 未测；RunService 内存锁，非 BullMQ 完整链路 |
-| 4 | Git push 远程可见 tests/ | ⏭️ | Wave 3 |
-| 5 | GitHub Action 失败 CI 红 | ⏭️ | Wave 3 |
-| 6 | viewer 403 / editor 可 run | ⏭️ | `AUTH_DISABLED=true` 跳过 RBAC；Wave 4 |
-| 7 | audit_logs 可查 | ⏭️ | Wave 4 |
-| 8 | API token scoped 仅 run | ⏭️ | Wave 3/4 |
+| 4 | Git push 远程可见 tests/ | ✅ | Wave 3：`demo-git-ci.sh` → `e2e/<timestamp>` 分支 SSH push 本库 |
+| 5 | GitHub Action 失败 CI 红 | ⏭️ | composite action 已有；未在 GitHub workflow 跑 |
+| 6 | viewer 403 / editor 可 run | ✅ | Wave 4：`demo-rbac.sh` viewer run/push 403，editor run 202 |
+| 7 | audit_logs 可查 | ✅ | Wave 4：`GET /audit` 含 `run.start`、`member.invite` |
+| 8 | API token scoped 仅 run | ✅ | Wave 3：run token → webhook 202；DELETE project → 403 |
 | 9 | 录制 30min idle 释放 | ⏭️ | 无 recorder 会话 |
 | 10 | upload 录制仍可用 | ✅ | MVP demo 步骤 3 |
 
-**Phase 3 小结：** #1、#10 ✅（Wave 2）；其余 ⏭️。`demo-phase3.sh` **不能**代表 Phase 3 验收。
+**Phase 3 小结：** #1、#4、#6、#7、#8、#10 ✅；#2/#3/#9 ⏭️；#5 Action 可选。
 
 ---
 
@@ -98,7 +100,7 @@
 |----------|-------------|
 | Phase 2 全量已完成 | compare 路由 ❌；fix 链未 E2E；demo 覆盖 ~40% |
 | Phase 3 P3-M2 noVNC 已完成 | Wave 2 已 build 镜像 + VNC 代理 + RecordPage Tab ✅；浏览器内手动操作仍建议补测 |
-| demo-phase3.sh 绿 | 只跑 MVP+Phase2 回归，**未**验 Phase3 §8 |
+| demo-phase3.sh 绿 | Wave 3 起含 git-ci + recording；RBAC 见独立 `demo-rbac.sh` |
 | AGENT「v1.0.0 全量已完成」 | **过度声明**；诚实状态：MVP ✅，Phase2 ⚠️，Phase3 大部分 ⏭️/❌ |
 
 ---
@@ -140,6 +142,45 @@
 
 ---
 
+## Wave 3 结果（Git + CI / P3-M3-M4）（2026-09-20）
+
+| # | 项 | 结果 | 证据 |
+|---|-----|------|------|
+| 1 | server 镜像 git + openssh | ✅ | `docker/server/Dockerfile`；compose 挂载 `~/.ssh:ro` |
+| 2 | git-service SSH URL | ✅ | `git@github.com:paulwong888/ai-auto-test-all.git`，无 HTTPS token |
+| 3 | sync clone + scaffold merge | ✅ | clone 本库；缺 tests/ 时 merge scaffold |
+| 4 | push e2e/* 分支 | ✅ | 分支 `e2e/1789836846613`，远程 `git ls-remote` 可见 |
+| 5 | API token + webhook CI | ✅ | `POST /tokens` → `POST /webhooks/ci/run` → run passed |
+| 6 | trigger_source=ci | ✅ | psql 验证 webhook run |
+| 7 | run token DELETE → 403 | ✅ | `TOKEN_SCOPE_DENIED` / 403 |
+| 8 | demo-git-ci.sh | ✅ | 退出码 0，~122s |
+
+**剩余 / 降级：**
+
+- GitHub Action workflow 在远程仓跑红/绿：⏭️ 可选
+- PR 创建（需 HTTPS token）：⏭️ 未测
+
+---
+
+## Wave 4 结果（RBAC + 审计 / P3-M5）（2026-09-20）
+
+| # | 项 | 结果 | 证据 |
+|---|-----|------|------|
+| 1 | docker-compose.auth.yml | ✅ | `AUTH_DISABLED=false` override |
+| 2 | 创建项目 → owner member | ✅ | `POST /projects` + `project_members` |
+| 3 | members API | ✅ | `GET/POST/DELETE /members` |
+| 4 | RBAC 路由守卫 | ✅ | plan/workflow/fix/record/run/git |
+| 5 | audit API + 埋点 | ✅ | `run.start`、`member.invite`；`git.push` 已接线 |
+| 6 | demo-rbac.sh | ✅ | 退出码 0，~2s |
+| 7 | AuthGuard + MembersPage | ✅ | `/projects/:id/settings/members` |
+
+**剩余 / 降级：**
+
+- org 多租户 / GitHub OAuth：⏭️ 未在本 Wave
+- 浏览器内 Members 页目视：⏭️ curl 已验 API
+
+---
+
 ## Wave 1 优先修复清单（按影响排序）
 
 1. ✅ **修复 `/runs/compare` 路由顺序** — 已完成
@@ -161,8 +202,14 @@ MODE=debug SEED_TESTS=always ./scripts/demo-saucedemo.sh
 # Phase 2（Wave 1 全量验收）
 ./scripts/demo-phase2.sh   # 退出码 0
 
-# Phase 3 smoke（非完整验收）
+# Phase 3（Git + CI + recording）
+./scripts/demo-git-ci.sh
 ./scripts/demo-phase3.sh
+
+# Wave 4 RBAC（需 auth override）
+cd docker && docker-compose -f docker-compose.yml -f docker-compose.auth.yml up -d server
+cd .. && ./scripts/demo-rbac.sh
+cd docker && docker-compose up -d server   # 恢复 AUTH off
 
 # compare 路由（Wave 1 已修复）
 curl -s "http://localhost:3001/api/projects/<PID>/runs/compare?runA=<R1>&runB=<R2>"

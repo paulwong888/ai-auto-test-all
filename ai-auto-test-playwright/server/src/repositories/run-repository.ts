@@ -3,6 +3,8 @@ import { query } from "../db/pool.js";
 export type RunStatus = "pending" | "running" | "passed" | "failed" | "cancelled";
 export type RunPreset = "debug" | "ci" | "custom" | null;
 
+export type RunTriggerSource = "web" | "ci" | "api";
+
 export interface RunRecord {
   id: string;
   projectId: string;
@@ -18,6 +20,7 @@ export interface RunRecord {
   preset: RunPreset;
   failedNodeIds: string[];
   parentRunId: string | null;
+  triggerSource: RunTriggerSource;
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;
@@ -38,6 +41,7 @@ interface RunRow {
   preset: RunPreset;
   failed_node_ids: string[] | null;
   parent_run_id: string | null;
+  trigger_source: RunTriggerSource | null;
   started_at: Date | null;
   finished_at: Date | null;
   created_at: Date;
@@ -59,6 +63,7 @@ function rowToRecord(row: RunRow): RunRecord {
     preset: row.preset,
     failedNodeIds: row.failed_node_ids ?? [],
     parentRunId: row.parent_run_id,
+    triggerSource: row.trigger_source ?? "web",
     startedAt: row.started_at?.toISOString() ?? null,
     finishedAt: row.finished_at?.toISOString() ?? null,
     createdAt: row.created_at.toISOString(),
@@ -71,8 +76,8 @@ export class RunRepository {
       `INSERT INTO runs (
          id, project_id, job_id, status, passed, failed, skipped, duration_ms,
          report_path, log_path, options, preset, failed_node_ids, parent_run_id,
-         started_at, finished_at, created_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,COALESCE($17::timestamptz, NOW()))`,
+         trigger_source, started_at, finished_at, created_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,COALESCE($18::timestamptz, NOW()))`,
       [
         run.id,
         run.projectId,
@@ -88,6 +93,7 @@ export class RunRepository {
         run.preset,
         JSON.stringify(run.failedNodeIds),
         run.parentRunId,
+        run.triggerSource ?? "web",
         run.startedAt,
         run.finishedAt,
         run.createdAt ?? null,

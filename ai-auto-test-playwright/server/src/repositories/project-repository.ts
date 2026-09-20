@@ -44,6 +44,17 @@ export class ProjectRepository {
     return result.rows.map(rowToRecord);
   }
 
+  async findByUserId(userId: string): Promise<ProjectRecord[]> {
+    const result = await query<ProjectRow>(
+      `SELECT p.* FROM projects p
+       INNER JOIN project_members pm ON pm.project_id = p.id
+       WHERE pm.user_id = $1
+       ORDER BY p.created_at ASC`,
+      [userId],
+    );
+    return result.rows.map(rowToRecord);
+  }
+
   async findById(id: string): Promise<ProjectRecord | null> {
     const result = await query<ProjectRow>("SELECT * FROM projects WHERE id = $1", [id]);
     return result.rows[0] ? rowToRecord(result.rows[0]) : null;

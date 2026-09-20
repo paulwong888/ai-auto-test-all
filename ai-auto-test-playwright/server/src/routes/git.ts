@@ -2,13 +2,18 @@ import { Router } from "express";
 import { isAppError } from "../errors.js";
 import type { GitService } from "../services/git-service.js";
 import type { ProjectService } from "../services/project-service.js";
-import { requireProjectRole } from "../middleware/auth.js";
+import { requireProjectRole, type AuthedRequest } from "../middleware/auth.js";
+import type { AuditService } from "../services/audit-service.js";
 
 function projectId(req: import("express").Request): string {
   return (req.params as { id: string }).id;
 }
 
-export function createGitRouter(gitService: GitService, projectService: ProjectService): Router {
+export function createGitRouter(
+  gitService: GitService,
+  projectService: ProjectService,
+  auditService: AuditService,
+): Router {
   const router = Router({ mergeParams: true });
 
   router.put("/git", requireProjectRole("owner", "editor"), async (req, res) => {
@@ -41,19 +46,27 @@ export function createGitRouter(gitService: GitService, projectService: ProjectS
     try {
       const project = await projectService.getById(projectId(req));
       if (!project) throw new Error("Project not found");
-      await gitService.sync(project.workspacePath, projectId(req));
+      await gitService.sync(project.workspacePath, projectId(req), project.baseUrl);
       res.json({ ok: true, data: { synced: true } });
     } catch (err) {
       sendError(res, err);
     }
   });
 
-  router.post("/git/push", requireProjectRole("owner", "editor"), async (req, res) => {
+  router.post("/git/push", requireProjectRole("owner", "editor"), async (req: AuthedRequest, res) => {
     try {
-      const project = await projectService.getById(projectId(req));
+      const pid = projectId(req);
+      const project = await projectService.getById(pid);
       if (!project) throw new Error("Project not found");
       const message = String(req.body?.message ?? "chore(e2e): update tests");
-      const { branch } = await gitService.push(project.workspacePath, projectId(req), message);
+      const { branch } = await gitService.push(project.workspacePath, pid, message);
+      await auditService.log({
+        projectId: pid,
+        userId: req.userId ?? null,
+        action: "git.push",
+        resource: branch,
+        metadata: { message },
+      });
       res.json({ ok: true, data: { branch } });
     } catch (err) {
       sendError(res, err);

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { createHash } from "node:crypto";
 import { isAppError } from "../errors.js";
 import type { RecorderService } from "../services/recorder-service.js";
-import { authDisabled } from "../middleware/auth.js";
+import { authDisabled, requireProjectRole } from "../middleware/auth.js";
 import { proxyVncHttp } from "./vnc-proxy.js";
 
 function projectId(req: import("express").Request): string {
@@ -12,7 +12,7 @@ function projectId(req: import("express").Request): string {
 export function createRecordLiveRouter(recorder: RecorderService): Router {
   const router = Router({ mergeParams: true });
 
-  router.post("/record/start", async (req, res) => {
+  router.post("/record/start", requireProjectRole("owner", "editor"), async (req, res) => {
     try {
       const moduleName = String(req.body?.moduleName ?? "saucedemo");
       const targetUrl = String(req.body?.targetUrl ?? req.body?.baseUrl ?? "");
@@ -29,7 +29,7 @@ export function createRecordLiveRouter(recorder: RecorderService): Router {
     }
   });
 
-  router.post("/record/stop", async (req, res) => {
+  router.post("/record/stop", requireProjectRole("owner", "editor"), async (req, res) => {
     try {
       const sessionId = String(req.body?.sessionId ?? "");
       if (!sessionId) {

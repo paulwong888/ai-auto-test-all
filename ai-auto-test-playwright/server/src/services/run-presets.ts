@@ -13,6 +13,8 @@ export interface RunRequestBody {
   nodeIds?: string[];
   rerunFailedOnly?: boolean;
   previousRunId?: string | null;
+  triggerSource?: "web" | "ci" | "api";
+  purpose?: string;
 }
 
 export interface ResolvedRunOptions {

@@ -25,6 +25,7 @@ import { WorkflowService } from "./services/workflow-service.js";
 import { GitService } from "./services/git-service.js";
 import { RecorderService } from "./services/recorder-service.js";
 import { JobScheduler } from "./services/job-scheduler.js";
+import { AuditService } from "./services/audit-service.js";
 import { wsHub } from "./ws/ws-hub.js";
 
 const app = express();
@@ -37,8 +38,9 @@ const codegenService = new CodegenService(config, projectService, piJobRunner);
 const runService = new RunService(config, projectService);
 const fixService = new FixService(config, projectService, piJobRunner);
 fixService.setRunService(runService);
-const gitService = new GitService();
+const gitService = new GitService(templateService);
 const recorderService = new RecorderService(projectService);
+const auditService = new AuditService();
 const jobScheduler = new JobScheduler();
 jobScheduler.start();
 
@@ -57,6 +59,7 @@ app.use("/api/projects", requireAuth, createProjectsRouter(projectService, {
   fixService,
   gitService,
   recorderService,
+  auditService,
 }));
 app.use("/api/jobs", requireAuth, createJobsRouter({ piJobRunner, runService }));
 

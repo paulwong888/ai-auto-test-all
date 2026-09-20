@@ -19,4 +19,14 @@ MODE=ci SEED_TESTS=always "$BASE/../scripts/demo-saucedemo.sh" 2>/dev/null || \
 echo "==> 4. Phase 2 regression"
 "$(dirname "$0")/demo-phase2.sh"
 
+echo "==> 5. Git + CI webhook (SSH, optional)"
+"$(dirname "$0")/demo-git-ci.sh"
+
+echo "==> 6. Wave 2 recording regression"
+"$(dirname "$0")/demo-recording.sh"
+
 echo "Phase 3 demo complete."
+
+# Optional RBAC (requires auth compose override):
+# docker-compose -f docker-compose.yml -f docker-compose.auth.yml up -d server
+# ./scripts/demo-rbac.sh

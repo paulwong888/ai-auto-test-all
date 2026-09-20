@@ -94,10 +94,65 @@ export class AuthService {
   }
 
   async ensureProjectMember(projectId: string, userId: string, role: "owner" | "editor" | "viewer"): Promise<void> {
+    await this.addProjectMember(projectId, userId, role);
+  }
+
+  async addProjectMember(
+    projectId: string,
+    userId: string,
+    role: "owner" | "editor" | "viewer",
+  ): Promise<void> {
     await query(
       `INSERT INTO project_members (project_id, user_id, role) VALUES ($1,$2,$3)
-       ON CONFLICT (project_id, user_id) DO NOTHING`,
+       ON CONFLICT (project_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
       [projectId, userId, role],
     );
+  }
+
+  async listProjectMembers(projectId: string): Promise<
+    Array<{ userId: string; email: string; displayName: string | null; role: string }>
+  > {
+    const result = await query<{
+      user_id: string;
+      role: string;
+      email: string;
+      display_name: string | null;
+    }>(
+      `SELECT pm.user_id, pm.role, u.email, u.display_name
+       FROM project_members pm
+       INNER JOIN users u ON u.id = pm.user_id
+       WHERE pm.project_id = $1
+       ORDER BY pm.role, u.email`,
+      [projectId],
+    );
+    return result.rows.map((row) => ({
+      userId: row.user_id,
+      email: row.email,
+      displayName: row.display_name,
+      role: row.role,
+    }));
+  }
+
+  async inviteMemberByEmail(
+    projectId: string,
+    email: string,
+    role: "editor" | "viewer",
+  ): Promise<{ userId: string; email: string; role: string }> {
+    const result = await query<{ id: string }>(`SELECT id FROM users WHERE email = $1`, [
+      email.toLowerCase(),
+    ]);
+    const user = result.rows[0];
+    if (!user) {
+      throw new AppError("USER_NOT_FOUND", `No user registered with email: ${email}`, 404);
+    }
+    await this.addProjectMember(projectId, user.id, role);
+    return { userId: user.id, email: email.toLowerCase(), role };
+  }
+
+  async removeProjectMember(projectId: string, userId: string): Promise<void> {
+    await query(`DELETE FROM project_members WHERE project_id = $1 AND user_id = $2`, [
+      projectId,
+      userId,
+    ]);
   }
 }

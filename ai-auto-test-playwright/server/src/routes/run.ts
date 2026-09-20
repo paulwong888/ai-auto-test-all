@@ -1,22 +1,20 @@
 import { Router } from "express";
 import { isAppError } from "../errors.js";
-import { requireProjectRole } from "../middleware/auth.js";
+import { assertApiTokenProject, requireProjectRole } from "../middleware/auth.js";
+import type { AuthedRequest } from "../middleware/auth.js";
 import type { RunService } from "../services/run-service.js";
+import type { AuditService } from "../services/audit-service.js";
+import { paramString, projectIdFromRequest } from "../utils/route-params.js";
 
-function projectId(req: import("express").Request): string {
-  const id = (req.params as { id?: string }).id;
-  if (typeof id !== "string" || !id) {
-    throw new Error("Missing project id");
-  }
-  return id;
-}
+const projectId = projectIdFromRequest;
 
-export function createRunRouter(runService: RunService): Router {
+export function createRunRouter(runService: RunService, auditService: AuditService): Router {
   const router = Router({ mergeParams: true });
 
-  router.post("/run", requireProjectRole("owner", "editor", "ci_bot"), async (req, res) => {
+  router.post("/run", requireProjectRole("owner", "editor", "ci_bot"), async (req: AuthedRequest, res) => {
     try {
-      const run = await runService.startRun(projectId(req), {
+      const pid = projectId(req);
+      const run = await runService.startRun(pid, {
         preset: req.body?.preset,
         headed: req.body?.headed,
         slowmo: req.body?.slowmo,
@@ -24,6 +22,13 @@ export function createRunRouter(runService: RunService): Router {
         nodeIds: Array.isArray(req.body?.nodeIds) ? req.body.nodeIds : undefined,
         rerunFailedOnly: req.body?.rerunFailedOnly === true,
         previousRunId: req.body?.previousRunId ?? null,
+      });
+      await auditService.log({
+        projectId: pid,
+        userId: req.userId ?? null,
+        action: "run.start",
+        resource: run.id,
+        metadata: { preset: run.preset, jobId: run.jobId },
       });
       res.status(202).json({
         ok: true,
@@ -47,10 +52,11 @@ export function createRunRouter(runService: RunService): Router {
     }
   });
 
-  router.get("/runs/:runId", async (req, res) => {
+  router.get("/runs/:runId", requireProjectRole("owner", "editor", "viewer", "ci_bot"), async (req, res) => {
     try {
       const id = projectId(req);
-      const runId = req.params.runId!;
+      if (!assertApiTokenProject(req as AuthedRequest, id, res)) return;
+      const runId = paramString(req.params.runId);
       const run = await runService.getRun(id, runId);
       if (!run) {
         res.status(404).json({

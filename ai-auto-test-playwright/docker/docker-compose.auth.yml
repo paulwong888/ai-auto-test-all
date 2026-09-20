@@ -1,0 +1,5 @@
+# Override for Wave 4 RBAC acceptance: AUTH_ENABLED
+services:
+  server:
+    environment:
+      AUTH_DISABLED: "false"

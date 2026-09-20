@@ -1,19 +1,15 @@
 import { Router } from "express";
 import { isAppError } from "../errors.js";
 import type { FixService } from "../services/fix-service.js";
+import { requireProjectMember, requireProjectRole } from "../middleware/auth.js";
+import { paramString, projectIdFromRequest } from "../utils/route-params.js";
 
-function projectId(req: import("express").Request): string {
-  const id = (req.params as { id?: string }).id;
-  if (typeof id !== "string" || !id) {
-    throw new Error("Missing project id");
-  }
-  return id;
-}
+const projectId = projectIdFromRequest;
 
 export function createFixRouter(fixService: FixService): Router {
   const router = Router({ mergeParams: true });
 
-  router.post("/fix/analyze", async (req, res) => {
+  router.post("/fix/analyze", requireProjectRole("owner", "editor"), async (req, res) => {
     try {
       const runId = typeof req.body?.runId === "string" ? req.body.runId : "";
       if (!runId) {
@@ -33,7 +29,7 @@ export function createFixRouter(fixService: FixService): Router {
     }
   });
 
-  router.post("/fix/apply", async (req, res) => {
+  router.post("/fix/apply", requireProjectRole("owner", "editor"), async (req, res) => {
     try {
       const suggestionId = typeof req.body?.suggestionId === "string" ? req.body.suggestionId : "";
       const patchIndexes = Array.isArray(req.body?.patchIndexes)
@@ -57,7 +53,7 @@ export function createFixRouter(fixService: FixService): Router {
     }
   });
 
-  router.post("/fix/verify", async (req, res) => {
+  router.post("/fix/verify", requireProjectRole("owner", "editor"), async (req, res) => {
     try {
       const runId = typeof req.body?.runId === "string" ? req.body.runId : "";
       if (!runId) {
@@ -74,7 +70,7 @@ export function createFixRouter(fixService: FixService): Router {
     }
   });
 
-  router.get("/fix/history", async (req, res) => {
+  router.get("/fix/history", requireProjectMember(), async (req, res) => {
     try {
       const runId = typeof req.query.runId === "string" ? req.query.runId : "";
       if (!runId) {
@@ -91,9 +87,9 @@ export function createFixRouter(fixService: FixService): Router {
     }
   });
 
-  router.get("/runs/:runId/fix", async (req, res) => {
+  router.get("/runs/:runId/fix", requireProjectMember(), async (req, res) => {
     try {
-      const data = await fixService.getFixSuggestion(projectId(req), req.params.runId!);
+      const data = await fixService.getFixSuggestion(projectId(req), paramString(req.params.runId));
       if (!data) {
         res.status(404).json({
           ok: false,

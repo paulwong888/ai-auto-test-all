@@ -8,6 +8,8 @@ import type { RunService } from "../services/run-service.js";
 import type { WorkflowService } from "../services/workflow-service.js";
 import type { GitService } from "../services/git-service.js";
 import type { RecorderService } from "../services/recorder-service.js";
+import type { AuditService } from "../services/audit-service.js";
+import { AuthService } from "../services/auth-service.js";
 import { createFixRouter } from "./fix.js";
 import { createPlanRouter } from "./plan.js";
 import { createRunRouter } from "./run.js";
@@ -16,7 +18,18 @@ import { createWorkflowRouter } from "./workflow.js";
 import { createGitRouter } from "./git.js";
 import { createRecordLiveRouter } from "./record-live.js";
 import { createTokensRouter } from "./tokens.js";
-import { requireProjectRole } from "../middleware/auth.js";
+import { createMembersRouter } from "./members.js";
+import { createAuditRouter } from "./audit.js";
+import {
+  authDisabled,
+  rejectApiTokenUnlessScope,
+  requireProjectMember,
+  requireProjectRole,
+  type AuthedRequest,
+} from "../middleware/auth.js";
+import { paramString } from "../utils/route-params.js";
+
+const authService = new AuthService();
 
 export function createProjectsRouter(
   projectService: ProjectService,
@@ -28,6 +41,7 @@ export function createProjectsRouter(
     fixService: FixService;
     gitService: GitService;
     recorderService: RecorderService;
+    auditService: AuditService;
   },
 ): Router {
   const router = Router();
@@ -36,34 +50,46 @@ export function createProjectsRouter(
     router.use("/:id", createPlanRouter(deps.planService));
     router.use("/:id", createWorkflowRouter(deps));
     router.use("/:id", createStatsRouter());
-    router.use("/:id", createRunRouter(deps.runService));
+    router.use("/:id", createRunRouter(deps.runService, deps.auditService));
     router.use("/:id", createFixRouter(deps.fixService));
-    router.use("/:id", createGitRouter(deps.gitService, projectService));
+    router.use("/:id", createGitRouter(deps.gitService, projectService, deps.auditService));
     router.use("/:id", createRecordLiveRouter(deps.recorderService));
     router.use("/:id", createTokensRouter());
+    router.use("/:id", createMembersRouter(deps.auditService));
+    router.use("/:id", createAuditRouter(deps.auditService));
   }
 
-  router.get("/", async (_req, res) => {
+  router.get("/", async (req: AuthedRequest, res) => {
     try {
-      const projects = await projectService.list();
+      const projects =
+        !authDisabled() && req.userId
+          ? await projectService.listForUser(req.userId)
+          : await projectService.list();
       res.json({ ok: true, data: { projects } });
     } catch (err) {
       sendError(res, err);
     }
   });
 
-  router.post("/", async (req, res) => {
+  router.post("/", async (req: AuthedRequest, res) => {
     try {
+      if (!authDisabled() && !req.userId) {
+        res.status(401).json({ ok: false, error: { code: "UNAUTHORIZED", message: "Authentication required" } });
+        return;
+      }
       const project = await projectService.create(req.body);
+      if (!authDisabled() && req.userId) {
+        await authService.ensureProjectMember(project.id, req.userId, "owner");
+      }
       res.status(201).json({ ok: true, data: project });
     } catch (err) {
       sendError(res, err);
     }
   });
 
-  router.get("/:id", async (req, res) => {
+  router.get("/:id", requireProjectMember(), async (req, res) => {
     try {
-      const project = await projectService.getById(req.params.id!);
+      const project = await projectService.getById(paramString(req.params.id));
       if (!project) {
         res.status(404).json({
           ok: false,
@@ -86,7 +112,7 @@ export function createProjectsRouter(
     }
   });
 
-  router.delete("/:id", requireProjectRole("owner"), async (req, res) => {
+  router.delete("/:id", rejectApiTokenUnlessScope("admin"), requireProjectRole("owner"), async (req, res) => {
     try {
       await projectService.remove(String(req.params.id));
       res.json({ ok: true, data: { deleted: true } });

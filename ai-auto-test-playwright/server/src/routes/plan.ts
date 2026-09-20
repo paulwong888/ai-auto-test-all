@@ -1,19 +1,15 @@
 import { Router } from "express";
 import { isAppError } from "../errors.js";
 import type { PlanService } from "../services/plan-service.js";
+import { requireProjectMember, requireProjectRole } from "../middleware/auth.js";
+import { paramString, projectIdFromRequest } from "../utils/route-params.js";
 
-function projectId(req: import("express").Request): string {
-  const id = (req.params as { id?: string }).id;
-  if (typeof id !== "string" || !id) {
-    throw new Error("Missing project id");
-  }
-  return id;
-}
+const projectId = projectIdFromRequest;
 
 export function createPlanRouter(planService: PlanService): Router {
   const router = Router({ mergeParams: true });
 
-  router.put("/plan", async (req, res) => {
+  router.put("/plan", requireProjectRole("owner", "editor"), async (req, res) => {
     try {
       const content = typeof req.body?.content === "string" ? req.body.content : "";
       if (!content.trim()) {
@@ -36,7 +32,7 @@ export function createPlanRouter(planService: PlanService): Router {
     }
   });
 
-  router.get("/plan/versions", async (req, res) => {
+  router.get("/plan/versions", requireProjectMember(), async (req, res) => {
     try {
       const moduleName =
         typeof req.query.moduleName === "string" ? req.query.moduleName : undefined;
@@ -47,16 +43,16 @@ export function createPlanRouter(planService: PlanService): Router {
     }
   });
 
-  router.get("/plan/versions/:versionId", async (req, res) => {
+  router.get("/plan/versions/:versionId", requireProjectMember(), async (req, res) => {
     try {
-      const data = await planService.getPlanVersion(projectId(req), req.params.versionId!);
+      const data = await planService.getPlanVersion(projectId(req), paramString(req.params.versionId));
       res.json({ ok: true, data });
     } catch (err) {
       sendError(res, err);
     }
   });
 
-  router.get("/plan/diff", async (req, res) => {
+  router.get("/plan/diff", requireProjectMember(), async (req, res) => {
     try {
       const v1 = typeof req.query.v1 === "string" ? req.query.v1 : "";
       const v2 = typeof req.query.v2 === "string" ? req.query.v2 : "";

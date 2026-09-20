@@ -20,7 +20,8 @@ export function createWebhooksRouter(runService: RunService): Router {
       const run = await runService.startRun(bodyProjectId, {
         preset: "ci",
         purpose: "run_ci",
-      } as import("../services/run-presets.js").RunRequestBody & { purpose?: string });
+        triggerSource: "ci",
+      });
       res.status(202).json({
         ok: true,
         data: { jobId: run.jobId, runId: run.id, status: run.status },

@@ -5,6 +5,7 @@ import { normalizeModuleName } from "../utils/module-name.js";
 import type { CodegenService } from "../services/codegen-service.js";
 import type { PlanService } from "../services/plan-service.js";
 import type { WorkflowService } from "../services/workflow-service.js";
+import { requireProjectMember, requireProjectRole } from "../middleware/auth.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -26,7 +27,7 @@ export function createWorkflowRouter(deps: {
 }): Router {
   const router = Router({ mergeParams: true });
 
-  router.post("/init-template", async (req, res) => {
+  router.post("/init-template", requireProjectRole("owner", "editor"), async (req, res) => {
     try {
       const result = await deps.workflowService.initTemplate(projectId(req));
       res.json({ ok: true, data: result });
@@ -35,7 +36,7 @@ export function createWorkflowRouter(deps: {
     }
   });
 
-  router.post("/record/upload", upload.single("file"), async (req, res) => {
+  router.post("/record/upload", requireProjectRole("owner", "editor"), upload.single("file"), async (req, res) => {
     try {
       const moduleName = normalizeModuleName(String(req.body?.moduleName ?? ""));
       if (!req.file) {
@@ -52,7 +53,7 @@ export function createWorkflowRouter(deps: {
     }
   });
 
-  router.post("/plan/generate", async (req, res) => {
+  router.post("/plan/generate", requireProjectRole("owner", "editor"), async (req, res) => {
     try {
       const id = projectId(req);
       const moduleName = await deps.planService.resolveModuleName(
@@ -73,7 +74,7 @@ export function createWorkflowRouter(deps: {
     }
   });
 
-  router.get("/plan", async (req, res) => {
+  router.get("/plan", requireProjectMember(), async (req, res) => {
     try {
       const moduleName =
         typeof req.query.moduleName === "string" ? req.query.moduleName : undefined;
@@ -84,7 +85,7 @@ export function createWorkflowRouter(deps: {
     }
   });
 
-  router.post("/code/generate", async (req, res) => {
+  router.post("/code/generate", requireProjectRole("owner", "editor"), async (req, res) => {
     try {
       const id = projectId(req);
       const moduleNameRaw = typeof req.body?.moduleName === "string" ? req.body.moduleName : "";
@@ -109,7 +110,7 @@ export function createWorkflowRouter(deps: {
     }
   });
 
-  router.get("/files", async (req, res) => {
+  router.get("/files", requireProjectMember(), async (req, res) => {
     try {
       const data = await deps.codegenService.listFiles(projectId(req));
       res.json({ ok: true, data });
@@ -118,7 +119,7 @@ export function createWorkflowRouter(deps: {
     }
   });
 
-  router.get("/workflow", async (req, res) => {
+  router.get("/workflow", requireProjectMember(), async (req, res) => {
     try {
       const data = await deps.workflowService.getWorkflow(projectId(req));
       res.json({ ok: true, data });
