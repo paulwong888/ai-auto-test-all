@@ -12,6 +12,7 @@ import { createGitRouter } from "./routes/git.js";
 import { createHealthRouter } from "./routes/health.js";
 import { createJobsRouter } from "./routes/jobs.js";
 import { createProjectsRouter } from "./routes/projects.js";
+import { handleRunVncWebSocketUpgrade, parseRunVncProxyPath } from "./routes/run-vnc-proxy.js";
 import { handleVncWebSocketUpgrade, parseVncProxyPath } from "./routes/vnc-proxy.js";
 import { createWebhooksRouter } from "./routes/webhooks.js";
 import { CodegenService } from "./services/codegen-service.js";
@@ -81,6 +82,10 @@ server.on("upgrade", (req, socket, head) => {
   }
   if (parseVncProxyPath(pathname)) {
     void handleVncWebSocketUpgrade(req, socket as Socket, head, recorderService);
+    return;
+  }
+  if (parseRunVncProxyPath(pathname)) {
+    void handleRunVncWebSocketUpgrade(req, socket as Socket, head, runService, config);
     return;
   }
   socket.destroy();

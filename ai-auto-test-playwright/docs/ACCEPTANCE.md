@@ -257,3 +257,19 @@ curl -s -X POST "http://localhost:3001/api/projects/<PID>/record/start" \
   -H 'Content-Type: application/json' \
   -d '{"moduleName":"saucedemo","targetUrl":"https://www.saucedemo.com"}'
 ```
+
+---
+
+## Phase 4 — Run 期 noVNC
+
+产品 PRD：[PRD-Phase4.md](../PRD-Phase4.md) · 速查：[RUN-VNC.md](./RUN-VNC.md) · 脚本：`scripts/demo-run-vnc.sh`
+
+| # | 验收项 | 结果 | 证据 / 备注 |
+|---|--------|------|-------------|
+| P4-1 | debug run 返回 `vncUrl`，`vnc.html` 200 | ✅ | `demo-run-vnc.sh` |
+| P4-2 | run 结束后 VNC 不可用 | ✅ | demo 检查完成后非 200 |
+| P4-3 | ci run 无 `vncUrl` | ✅ | `run-presets.test.ts` + API |
+| P4-4 | AUTH 下 VNC token | ⏭️ | 需 `docker-compose.auth.yml` 手测 |
+| P4-5 | iframe 目视 Saucedemo 自动化 | ⏭️ | 需浏览器 Run 页 debug |
+
+**说明：** debug + `vncPreview` 走 Worker `:99` + websockify；ci 仍 headless 无预览。

@@ -100,7 +100,14 @@ export type WsMessage =
   | { type: "fix_ready"; projectId: string; jobId: string; runId: string }
   | { type: "fix_failed"; projectId: string; jobId: string; runId: string; error: string }
   | { type: "job_log"; projectId: string; jobId: string; stream: "ai" | "tool" | "stderr"; text: string }
-  | { type: "run_started"; runId: string; projectId: string; jobId?: string }
+  | {
+      type: "run_started";
+      runId: string;
+      projectId: string;
+      jobId?: string;
+      vncUrl?: string;
+      vncToken?: string;
+    }
   | { type: "run_log"; runId: string; line: string }
   | { type: "run_finished"; runId: string; passed: number; failed: number; skipped: number; durationMs: number }
   | { type: "job_queued"; projectId: string; jobId: string; jobType: string }

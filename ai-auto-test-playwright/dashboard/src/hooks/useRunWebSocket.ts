@@ -4,6 +4,8 @@ export interface RunLiveState {
   runId: string | null;
   running: boolean;
   logs: string[];
+  vncUrl: string | null;
+  vncToken: string | null;
   result: { passed: number; failed: number; skipped: number; durationMs: number } | null;
 }
 
@@ -12,6 +14,8 @@ export function useRunWebSocket() {
     runId: null,
     running: false,
     logs: [],
+    vncUrl: null,
+    vncToken: null,
     result: null,
   });
   const activeRunIdRef = useRef<string | null>(null);
@@ -25,7 +29,14 @@ export function useRunWebSocket() {
         const msg = JSON.parse(event.data as string) as Record<string, unknown>;
         if (msg.type === "run_started" && typeof msg.runId === "string") {
           activeRunIdRef.current = msg.runId;
-          setState({ runId: msg.runId, running: true, logs: [], result: null });
+          setState({
+            runId: msg.runId,
+            running: true,
+            logs: [],
+            vncUrl: typeof msg.vncUrl === "string" ? msg.vncUrl : null,
+            vncToken: typeof msg.vncToken === "string" ? msg.vncToken : null,
+            result: null,
+          });
         }
         if (
           msg.type === "run_log" &&
@@ -46,6 +57,8 @@ export function useRunWebSocket() {
           setState((prev) => ({
             ...prev,
             running: false,
+            vncUrl: null,
+            vncToken: null,
             result: {
               passed: Number(msg.passed ?? 0),
               failed: Number(msg.failed ?? 0),
@@ -64,7 +77,14 @@ export function useRunWebSocket() {
 
   const reset = useCallback(() => {
     activeRunIdRef.current = null;
-    setState({ runId: null, running: false, logs: [], result: null });
+    setState({
+      runId: null,
+      running: false,
+      logs: [],
+      vncUrl: null,
+      vncToken: null,
+      result: null,
+    });
   }, []);
 
   return { ...state, resetLive: reset };

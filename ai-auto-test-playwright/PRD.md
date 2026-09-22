@@ -726,7 +726,7 @@ CREATE INDEX idx_jobs_project_status ON jobs(project_id, status);
 | `/projects/:id/record` | 录制上传 | 上传 recorded.py；展示 codegen 命令 |
 | `/projects/:id/plan` | 用例计划 | Markdown 渲染；「确认并生成代码」 |
 | `/projects/:id/code` | 代码浏览 | 文件树 + 只读代码预览 |
-| `/projects/:id/run` | 执行 | headed/slowmo 选项；WebSocket 终端 |
+| `/projects/:id/run` | 执行 | headed/slowmo、preset；WebSocket 终端；（Phase 4 计划）noVNC 预览，见 [PRD-Phase4.md](./PRD-Phase4.md) |
 | `/projects/:id/report/:runId` | 报告 | iframe 嵌入 report.html；trace 下载链接 |
 
 > MVP 实现说明（含部分交付项）：见 [PRD-MVP-Implementation.md §7](./PRD-MVP-Implementation.md#7-mvp-完成说明--实现差异)。
@@ -912,7 +912,7 @@ tests/
 | ADR-001 | MVP 采用上传录制而非 Web codegen | 实现成本低；录制质量可控 | 2026-09-19 |
 | ADR-002 | AI 使用 Pi RPC 而非直接 LLM API | 与现有 platform 一致；skills 可复用 | 2026-09-19 |
 | ADR-003 | 测试栈选 pytest-playwright | 与 skills 和样例工程一致 | 2026-09-19 |
-| ADR-004 | 默认 headed + slowmo 600 | 用户需观察执行过程 | 2026-09-19 |
+| ADR-004 | 默认 headed + slowmo 600 | 用户需观察执行过程（MVP：终端/报告；Phase 4：Run noVNC，见 [PRD-Phase4.md](./PRD-Phase4.md)） | 2026-09-19 |
 | ADR-005 | MVP fix 只读建议 | 避免 AI 擅自改码；对齐 skill 原则 | 2026-09-19 |
 | ADR-006 | 单 Worker 单任务 mutex | 简化 MVP；对齐 platform RunService | 2026-09-19 |
 | ADR-007 | MVP 引入 jobs 表 | 统一 plan/code/fix/run 异步模型；Phase 3 队列复用 | 2026-09-19 |

@@ -10,7 +10,14 @@ import { readNdjsonStream } from "../utils/ndjson-stream.js";
 import { parsePytestSummaryFromLogs } from "../utils/pytest-summary.js";
 import { wsHub } from "../ws/ws-hub.js";
 import { buildPytestCommand, type PytestRunOptions } from "./pytest-runner.js";
-import { resolveRunOptions, type RunRequestBody } from "./run-presets.js";
+import {
+  effectiveVncPreview,
+  effectiveVncPreviewFromRunOptions,
+  resolveRunOptions,
+  type RunRequestBody,
+} from "./run-presets.js";
+import { authDisabled } from "../middleware/auth.js";
+import { createVncToken } from "../routes/vnc-tokens.js";
 import type { ProjectService } from "./project-service.js";
 import { parseFailedNodeIdsFromLogs } from "../utils/pytest-node-ids.js";
 
@@ -61,7 +68,42 @@ export class RunService {
     }
   }
 
-  async startRun(projectId: string, options: RunStartOptions = {}): Promise<RunRecord> {
+  buildRunVncUrl(projectId: string, runId: string): string {
+    return `/api/projects/${projectId}/runs/${runId}/vnc`;
+  }
+
+  getRunVncFields(
+    projectId: string,
+    run: RunRecord,
+    userId?: string | null,
+  ): { vncUrl: string | null; vncToken?: string } {
+    if (!this.isRunVncActive(run)) {
+      return { vncUrl: null };
+    }
+    const vncUrl = this.buildRunVncUrl(projectId, run.id);
+    if (authDisabled() || !userId) {
+      return { vncUrl };
+    }
+    return { vncUrl, vncToken: createVncToken(run.id, userId, "run") };
+  }
+
+  isRunVncActive(run: RunRecord): boolean {
+    return run.status === "running" && effectiveVncPreviewFromRunOptions(run.options);
+  }
+
+  async getRunVncMeta(projectId: string, runId: string): Promise<{ active: true } | null> {
+    const run = await this.runs.findById(runId);
+    if (!run || run.projectId !== projectId || !this.isRunVncActive(run)) {
+      return null;
+    }
+    return { active: true };
+  }
+
+  async startRun(
+    projectId: string,
+    options: RunStartOptions = {},
+    ctx: { userId?: string | null } = {},
+  ): Promise<RunRecord> {
     if (this.activeRunsByProject.has(projectId)) {
       throw new AppError("RUN_IN_PROGRESS", "A run is already in progress for this project", 409);
     }
@@ -121,8 +163,9 @@ export class RunService {
       logPath: `tests/.runs/${runId}/run.log`,
       options: {
         workspacePath: runOptions.workspacePath,
-        headed: runOptions.headed,
+        headed: resolved.headed,
         slowmo: runOptions.slowmo,
+        vncPreview: resolved.vncPreview,
         specFilter: runOptions.specFilter ?? null,
         nodeIds,
         rerunFailedOnly: options.rerunFailedOnly ?? false,
@@ -157,9 +200,22 @@ export class RunService {
     this.activeRunsByProject.set(projectId, { runId, projectId, jobId, startedAt: now });
     this.abortController = new AbortController();
 
-    wsHub.broadcast({ type: "run_started", runId, projectId, jobId });
+    const vncFields = this.getRunVncFields(projectId, run, ctx.userId);
+    wsHub.broadcast({
+      type: "run_started",
+      runId,
+      projectId,
+      jobId,
+      vncUrl: vncFields.vncUrl ?? undefined,
+      vncToken: vncFields.vncToken,
+    });
 
-    void this.executeRun(run, project.workspacePath, runOptions).catch((err) => {
+    void this.executeRun(
+      run,
+      project.workspacePath,
+      runOptions,
+      effectiveVncPreview(resolved),
+    ).catch((err) => {
       console.error(`[run-service] ${runId} failed:`, err);
     });
 
@@ -245,6 +301,7 @@ export class RunService {
     run: RunRecord,
     workspacePath: string,
     options: PytestRunOptions,
+    vncPreview: boolean,
   ): Promise<void> {
     const command = buildPytestCommand(options);
     const logLines: string[] = [];
@@ -258,6 +315,7 @@ export class RunService {
           runId: run.id,
           workspacePath,
           command,
+          vncPreview,
         }),
         signal: this.abortController?.signal,
       });

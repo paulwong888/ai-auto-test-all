@@ -31,6 +31,8 @@ export const config = {
     path.join(rootDir, "data/projects"),
   ),
   workerUrl: process.env.WORKER_URL ?? "http://worker:8081",
+  workerVncHost: process.env.WORKER_VNC_HOST ?? "worker",
+  workerVncPort: Number(process.env.WORKER_VNC_PORT ?? 6080),
   pi: {
     cliPath: process.env.PI_CLI_PATH ?? "pi",
     rpcArgs: (process.env.PI_RPC_ARGS ?? "--no-session").split(/\s+/).filter(Boolean),

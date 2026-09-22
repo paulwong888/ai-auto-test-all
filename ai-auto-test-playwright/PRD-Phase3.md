@@ -650,6 +650,8 @@ PRD-Phase3-Implementation.md   ← Phase 3 实施
 | CI 触发 | — | — | ✓ |
 | RBAC | — | — | ✓ |
 
+> **说明：** Phase 3 的 **Web 录制 noVNC** 仅用于人工 codegen（`/record`），**不是** Run 页执行时的浏览器预览。Run 期 noVNC 为 **Phase 4** 范围，见 [PRD-Phase4.md](./PRD-Phase4.md) 与 [docs/RUN-VNC.md](./docs/RUN-VNC.md)。
+
 ---
 
 ## 附录 B：Recorder 容器 Dockerfile 要点

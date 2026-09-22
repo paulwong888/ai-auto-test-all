@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { createHash } from "node:crypto";
 import { isAppError } from "../errors.js";
+import { createVncToken } from "./vnc-tokens.js";
 import type { RecorderService } from "../services/recorder-service.js";
 import { authDisabled, requireProjectRole } from "../middleware/auth.js";
 import { proxyVncHttp } from "./vnc-proxy.js";
@@ -22,7 +22,7 @@ export function createRecordLiveRouter(recorder: RecorderService): Router {
       }
       const data = await recorder.startSession(projectId(req), moduleName, targetUrl);
       const userId = (req as { userId?: string }).userId ?? "anonymous";
-      const vncToken = authDisabled() ? undefined : createVncToken(data.sessionId, userId);
+      const vncToken = authDisabled() ? undefined : createVncToken(data.sessionId, userId, "record");
       res.status(201).json({ ok: true, data: { ...data, vncToken } });
     } catch (err) {
       sendError(res, err);
@@ -81,32 +81,6 @@ export function createRecordLiveRouter(recorder: RecorderService): Router {
   });
 
   return router;
-}
-
-export function createVncToken(sessionId: string, userId: string): string {
-  const secret = process.env.JWT_SECRET ?? "dev-jwt-secret";
-  const payload = Buffer.from(JSON.stringify({ sessionId, userId, exp: Date.now() + 300_000 })).toString("base64url");
-  const sig = createHash("sha256").update(`${payload}.${secret}`).digest("base64url");
-  return `${payload}.${sig}`;
-}
-
-export function verifyVncToken(token: string, sessionId: string): string | null {
-  const secret = process.env.JWT_SECRET ?? "dev-jwt-secret";
-  const [payload, sig] = token.split(".");
-  if (!payload || !sig) return null;
-  const expected = createHash("sha256").update(`${payload}.${secret}`).digest("base64url");
-  if (sig !== expected) return null;
-  try {
-    const data = JSON.parse(Buffer.from(payload, "base64url").toString()) as {
-      sessionId?: string;
-      userId?: string;
-      exp?: number;
-    };
-    if (data.sessionId !== sessionId || !data.userId || !data.exp || Date.now() > data.exp) return null;
-    return data.userId;
-  } catch {
-    return null;
-  }
 }
 
 function sendError(res: import("express").Response, err: unknown): void {

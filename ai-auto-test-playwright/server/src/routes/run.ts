@@ -1,28 +1,40 @@
 import { Router } from "express";
+import type { AppConfig } from "../config.js";
 import { isAppError } from "../errors.js";
 import { assertApiTokenProject, requireProjectRole } from "../middleware/auth.js";
 import type { AuthedRequest } from "../middleware/auth.js";
 import type { RunService } from "../services/run-service.js";
 import type { AuditService } from "../services/audit-service.js";
 import { paramString, projectIdFromRequest } from "../utils/route-params.js";
+import { proxyRunVncHttp } from "./run-vnc-proxy.js";
 
 const projectId = projectIdFromRequest;
 
-export function createRunRouter(runService: RunService, auditService: AuditService): Router {
+export function createRunRouter(
+  runService: RunService,
+  auditService: AuditService,
+  config: AppConfig,
+): Router {
   const router = Router({ mergeParams: true });
 
   router.post("/run", requireProjectRole("owner", "editor", "ci_bot"), async (req: AuthedRequest, res) => {
     try {
       const pid = projectId(req);
-      const run = await runService.startRun(pid, {
-        preset: req.body?.preset,
-        headed: req.body?.headed,
-        slowmo: req.body?.slowmo,
-        specFilter: req.body?.specFilter ?? null,
-        nodeIds: Array.isArray(req.body?.nodeIds) ? req.body.nodeIds : undefined,
-        rerunFailedOnly: req.body?.rerunFailedOnly === true,
-        previousRunId: req.body?.previousRunId ?? null,
-      });
+      const run = await runService.startRun(
+        pid,
+        {
+          preset: req.body?.preset,
+          headed: req.body?.headed,
+          slowmo: req.body?.slowmo,
+          vncPreview: req.body?.vncPreview,
+          specFilter: req.body?.specFilter ?? null,
+          nodeIds: Array.isArray(req.body?.nodeIds) ? req.body.nodeIds : undefined,
+          rerunFailedOnly: req.body?.rerunFailedOnly === true,
+          previousRunId: req.body?.previousRunId ?? null,
+        },
+        { userId: req.userId ?? null },
+      );
+      const vncFields = runService.getRunVncFields(pid, run, req.userId ?? null);
       await auditService.log({
         projectId: pid,
         userId: req.userId ?? null,
@@ -36,6 +48,8 @@ export function createRunRouter(runService: RunService, auditService: AuditServi
           runId: run.id,
           jobId: run.jobId,
           status: run.status,
+          vncUrl: vncFields.vncUrl,
+          vncToken: vncFields.vncToken,
         },
       });
     } catch (err) {
@@ -54,8 +68,9 @@ export function createRunRouter(runService: RunService, auditService: AuditServi
 
   router.get("/runs/:runId", requireProjectRole("owner", "editor", "viewer", "ci_bot"), async (req, res) => {
     try {
+      const authed = req as AuthedRequest;
       const id = projectId(req);
-      if (!assertApiTokenProject(req as AuthedRequest, id, res)) return;
+      if (!assertApiTokenProject(authed, id, res)) return;
       const runId = paramString(req.params.runId);
       const run = await runService.getRun(id, runId);
       if (!run) {
@@ -65,13 +80,43 @@ export function createRunRouter(runService: RunService, auditService: AuditServi
         });
         return;
       }
+      const vncFields = runService.getRunVncFields(id, run, authed.userId ?? null);
       res.json({
         ok: true,
         data: {
           ...run,
           reportUrl: `/api/projects/${id}/runs/${runId}/report`,
+          vncUrl: vncFields.vncUrl,
+          vncToken: vncFields.vncToken,
         },
       });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  router.get("/runs/:runId/vnc", async (req, res) => {
+    try {
+      const id = projectId(req);
+      const runId = paramString(req.params.runId);
+      const token = typeof req.query.token === "string" ? req.query.token : "";
+      const qs = new URLSearchParams();
+      if (token) qs.set("token", token);
+      qs.set("resize", "scale");
+      qs.set("autoconnect", "true");
+      qs.set("reconnect", "true");
+      res.redirect(302, `/api/projects/${id}/runs/${runId}/vnc/vnc.html?${qs.toString()}`);
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  router.use("/runs/:runId/vnc", async (req, res) => {
+    try {
+      const id = projectId(req);
+      const runId = paramString(req.params.runId);
+      const subPath = req.path && req.path !== "/" ? req.path : "/vnc.html";
+      await proxyRunVncHttp(req, res, runService, config, id, runId, subPath);
     } catch (err) {
       sendError(res, err);
     }

@@ -412,11 +412,11 @@ Agent 施工时勿将下列项误判为「未实现 bug」。
 | [PRD §9 全部 9 条](PRD.md#9-mvp-验收标准) | 已通过 | demo 脚本 + 四服务 healthy |
 | M4-04 Record codegen 指引 | **已完成** | RecordPage 展示 `npx playwright codegen` 命令 + 复制按钮 |
 | M4-10 Tab 按 stage 禁用 | **已完成** | `useWorkflow` + Layout Tab 按 stage/stageStatus 门控 |
-| PRD §9-7 headed + slowmo | **部分** | Worker 内 Xvfb 执行，**宿主机不弹浏览器**（Phase 3 noVNC） |
+| PRD §9-7 headed + slowmo | **部分** | Worker 内 Xvfb 执行，**宿主机不弹浏览器**；**无 Run 期 VNC**（预览见 [PRD-Phase4.md](./PRD-Phase4.md)） |
 | PRD §8 性能 CI <3min | **已完成** | headless 不再包 xvfb-run；`proc.wait()` 超时 + flush 修复 run 状态延迟 |
 | PRD §3.2 upload 校验 playwright import | **已完成** | `uploadRecording` 校验 `from playwright` / `import playwright` |
 | fix/analyze | 已完成 | 只读建议；依赖 `DASHSCOPE_API_KEY`（`.env.local`） |
-| 在线录制 / noVNC | 未做 | Phase 3 范围 |
+| Web 录制 noVNC | **已完成** | Phase 3；**不含** Run 执行预览（Phase 4） |
 
 **与 PRD §9 验收对照：**
 

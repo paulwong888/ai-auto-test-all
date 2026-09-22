@@ -61,6 +61,8 @@ services:
       HOST: ${HOST:-0.0.0.0}
       PORT: ${PORT:-3001}
       WORKER_URL: ${WORKER_URL:-http://worker:8081}
+      WORKER_VNC_HOST: ${WORKER_VNC_HOST:-worker}
+      WORKER_VNC_PORT: ${WORKER_VNC_PORT:-6080}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       AUTH_DISABLED: ${AUTH_DISABLED:-true}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}

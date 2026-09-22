@@ -28,6 +28,7 @@ import {
   type AuthedRequest,
 } from "../middleware/auth.js";
 import { paramString } from "../utils/route-params.js";
+import { config } from "../config.js";
 
 const authService = new AuthService();
 
@@ -50,7 +51,7 @@ export function createProjectsRouter(
     router.use("/:id", createPlanRouter(deps.planService));
     router.use("/:id", createWorkflowRouter(deps));
     router.use("/:id", createStatsRouter());
-    router.use("/:id", createRunRouter(deps.runService, deps.auditService));
+    router.use("/:id", createRunRouter(deps.runService, deps.auditService, config));
     router.use("/:id", createFixRouter(deps.fixService));
     router.use("/:id", createGitRouter(deps.gitService, projectService, deps.auditService));
     router.use("/:id", createRecordLiveRouter(deps.recorderService));

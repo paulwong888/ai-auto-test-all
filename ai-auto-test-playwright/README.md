@@ -9,6 +9,8 @@ Web 化 Playwright pytest E2E 自动化平台（MVP v0.1.0）。
 | [PRD.md](./PRD.md) | 产品需求、API、MVP 验收标准 |
 | [AGENT.md](./AGENT.md) | Agent/开发施工指南（**开发必读**） |
 | [PRD-MVP-Implementation.md](./PRD-MVP-Implementation.md) | M1–M4 里程碑、完成状态、实现差异 |
+| [PRD-Phase4.md](./PRD-Phase4.md) | Run 期 noVNC 预览（**已实现**） |
+| [docs/RUN-VNC.md](./docs/RUN-VNC.md) | Run vs 录制 VNC、Headed 不弹窗说明 |
 
 ## 快速启动（Docker，四服务）
 
@@ -16,8 +18,12 @@ Web 化 Playwright pytest E2E 自动化平台（MVP v0.1.0）。
 cd docker
 cp .env.example .env
 cp .env.local.example .env.local   # 填入 DASHSCOPE_API_KEY
-docker-compose up --build -d
-# 若无 docker compose 插件，用 docker-compose；若有则用 docker compose up --build -d
+chmod +x start.sh rebuild.sh restart.sh shutdown.sh logs.sh
+./rebuild.sh    # 首次或改 Dockerfile 后
+# ./start.sh    # 日常启动（不重建镜像）
+# ./restart.sh  # 强制重建容器（改 .env 后）
+# ./shutdown.sh
+# ./logs.sh [server|worker|...]
 ```
 
 Pi / 阿里云百炼：编辑 `docker/.env.local`，填入 `DASHSCOPE_API_KEY`（[百炼控制台](https://bailian.console.aliyun.com/)）。验证：
@@ -51,6 +57,8 @@ SEED_TESTS=always ./scripts/demo-saucedemo.sh
 ```
 
 脚本走通：创建项目 → init → upload →（可选 Pi plan/code 或 seed tests）→ run → report → fix/analyze（失败时）。
+
+**执行与浏览器预览：** **debug** preset 在 Run 页提供 noVNC 预览（Worker 虚拟桌面，非本机弹窗）；**ci** 无预览。详见 [docs/RUN-VNC.md](./docs/RUN-VNC.md)、`scripts/demo-run-vnc.sh`。
 
 完整验收对照 [PRD.md 第 9 章](./PRD.md#9-mvp-验收标准)。
 

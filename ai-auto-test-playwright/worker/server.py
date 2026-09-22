@@ -63,14 +63,20 @@ def emit(writer: Any, payload: dict[str, Any]) -> None:
     writer.flush()
 
 
-def run_command(run_id: str, command: str, writer: Any) -> None:
+def run_command(run_id: str, command: str, writer: Any, vnc_preview: bool = False) -> None:
     started = time.time()
     output_chunks: list[str] = []
 
-    if "--headed" in command:
+    headed = "--headed" in command
+    if headed and vnc_preview:
+        wrapped = f"sh -c {json.dumps(command)}"
+        run_env = {**os.environ, "DISPLAY": ":99"}
+    elif headed:
         wrapped = f"xvfb-run -a sh -c {json.dumps(command)}"
+        run_env = None
     else:
         wrapped = f"sh -c {json.dumps(command)}"
+        run_env = None
 
     timeout_sec = max(RUN_TIMEOUT_MS // 1000, 60)
     proc = subprocess.Popen(
@@ -81,6 +87,7 @@ def run_command(run_id: str, command: str, writer: Any) -> None:
         text=True,
         bufsize=1,
         start_new_session=True,
+        env=run_env,
     )
 
     with _lock:
@@ -170,7 +177,15 @@ class WorkerHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
-            self._send_json(200, {"ok": True, "workerId": os.environ.get("WORKER_ID", "worker-1")})
+            vnc_ready = os.environ.get("DISPLAY") == ":99"
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "workerId": os.environ.get("WORKER_ID", "worker-1"),
+                    "vncReady": vnc_ready,
+                },
+            )
             return
         if self.path == "/heartbeat":
             self._send_json(200, {"ok": True, "ts": time.time()})
@@ -182,6 +197,7 @@ class WorkerHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
             run_id = str(payload.get("runId", ""))
             command = str(payload.get("command", ""))
+            vnc_preview = payload.get("vncPreview") is True
             if not run_id or not command:
                 self._send_json(400, {"ok": False, "error": "runId and command are required"})
                 return
@@ -190,7 +206,7 @@ class WorkerHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/x-ndjson")
             self.end_headers()
 
-            run_command(run_id, command, self.wfile)
+            run_command(run_id, command, self.wfile, vnc_preview=vnc_preview)
             return
 
         if self.path == "/internal/cancel":

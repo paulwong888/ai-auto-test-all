@@ -6,10 +6,13 @@ interface Props {
 }
 
 export function LiveTerminal({ logs, running }: Props) {
-  const endRef = useRef<HTMLDivElement>(null);
+  const preRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = preRef.current;
+    if (!el) return;
+    // Scroll inside the log panel only — scrollIntoView would drag the whole page down.
+    el.scrollTop = el.scrollHeight;
   }, [logs]);
 
   return (
@@ -20,9 +23,11 @@ export function LiveTerminal({ logs, running }: Props) {
         />
         {running ? "运行中…" : "终端输出"}
       </div>
-      <pre className="p-4 text-xs font-mono text-emerald-200/90 max-h-96 overflow-auto whitespace-pre-wrap break-all">
+      <pre
+        ref={preRef}
+        className="p-4 text-xs font-mono text-emerald-200/90 max-h-96 overflow-auto whitespace-pre-wrap break-all"
+      >
         {logs.length === 0 ? "等待日志…" : logs.join("\n")}
-        <div ref={endRef} />
       </pre>
     </div>
   );

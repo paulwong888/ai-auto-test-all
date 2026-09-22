@@ -35,8 +35,11 @@
 | [PRD-Phase2-Implementation.md](./PRD-Phase2-Implementation.md) | Phase 2 实施拆解 |
 | [PRD-Phase3.md](./PRD-Phase3.md) | 队列、Web 录制、Git、RBAC |
 | [PRD-Phase3-Implementation.md](./PRD-Phase3-Implementation.md) | Phase 3 实施拆解 |
+| [PRD-Phase4.md](./PRD-Phase4.md) | Run 期 noVNC（**未实现**，产品 PRD） |
+| [PRD-Phase4-Implementation.md](./PRD-Phase4-Implementation.md) | Phase 4 实施拆解 |
+| [docs/RUN-VNC.md](./docs/RUN-VNC.md) | Run / Record VNC 速查 |
 
-**当前阶段：Phase 2 + Phase 3 全量已完成（v1.0.0）** — fix apply 闭环、run preset/compare、Redis 队列、noVNC 录制、Git、CI token、邮箱登录 RBAC。
+**当前阶段：Phase 2–4 核心已交付（v1.0.0+）** — 含 **Run 期 noVNC**（debug preset + RunPage iframe，Worker websockify + server 代理）。详见 [docs/RUN-VNC.md](./docs/RUN-VNC.md)。
 
 **默认 demo：** `AUTH_DISABLED=true`（docker `.env`），生产需启用 JWT + 项目成员。
 
@@ -77,6 +80,7 @@ ai-auto-test-playwright/
 | **Phase 3 P3-M3** | Git bind/push/PR | **已完成** |
 | **Phase 3 P3-M4** | CI webhook + GitHub Action | **已完成** |
 | **Phase 3 P3-M5** | 邮箱登录 + RBAC + audit | **已完成** |
+| **Phase 4 P4 Run VNC** | Run 页 noVNC 预览 | **已完成** |
 
 ---
 
@@ -165,8 +169,8 @@ Server 环境：`cd server && cp ../docker/.env.example .env`，设置 `POSTGRES
 
 ## 10. 已知限制（Agent 勿误判为 bug）
 
-1. **Headed / SlowMo** — Run 在 Worker 容器内通过 **Xvfb** 执行；勾选 Headed **不会在用户桌面弹浏览器**。要本地看浏览器请在 workspace 内直接 `pytest --headed`。
-2. **录制** — MVP 仅 **本地上传** `.py`；Web 内 codegen / noVNC 属 **Phase 3**。
+1. **Headed / SlowMo / Run 预览** — Headed **不会**在用户桌面弹浏览器。**debug**（及 custom+预览）通过 Run 页 noVNC 看 Worker 虚拟桌面；**ci** 无预览。见 [docs/RUN-VNC.md](./docs/RUN-VNC.md)。
+2. **录制** — 支持本地上传与 **Phase 3 Web 录制 noVNC**（人工操作 codegen，非 Run 执行预览）。
 3. **单 module** — 每项目一个 `moduleName`；多模块请拆多个项目（ADR-009）。
 4. **Run 状态更新偏慢** — pytest 本身 ~45s，但 Worker NDJSON 流关闭慢导致 DB 状态延迟；server 已从 log 行 fallback 解析 passed/failed。
 5. **Pi 依赖** — plan/code/fix 需 `docker/.env.local` 中 `DASHSCOPE_API_KEY`；无 Key 时用 `SEED_TESTS=always` demo 跳过 AI 步骤。

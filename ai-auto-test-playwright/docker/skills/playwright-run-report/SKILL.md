@@ -27,7 +27,8 @@ cd tests && pytest specs/ \
 
 说明：
 
-- **`--headed`（默认）**：有头模式执行，弹出浏览器窗口，便于观察执行过程
+- **`--headed`（默认）**：有头模式执行；**在本机终端**运行时会弹出浏览器窗口，便于观察
+- **经 ai-auto-test-playwright Dashboard / Worker 执行时**：headed 在容器虚拟屏内运行，**不会**在用户桌面弹窗；**debug** preset 可在 Run 页看 noVNC 预览（见 `docs/RUN-VNC.md`）；ci 或无预览时请用终端、报告与 trace
 - CI/批量回归时用户明确要求无头，去掉 `--headed` 即可
 - `--tracing retain-on-failure`：失败用例自动保留 trace
 - 用户可指定范围：单文件 `pytest specs/test_login.py --headed`、单用例 `pytest specs/test_login.py::TestLogin::test_tc001_login_success --headed`

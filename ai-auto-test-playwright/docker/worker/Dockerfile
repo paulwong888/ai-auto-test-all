@@ -9,6 +9,9 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     xvfb \
     xauth \
+    x11vnc \
+    websockify \
+    novnc \
     curl \
     ca-certificates \
   && rm -rf /var/lib/apt/lists/*
@@ -22,10 +25,11 @@ RUN python -m venv /opt/venv \
 WORKDIR /app
 
 COPY worker/ /app/worker/
+COPY docker/worker/entrypoint.sh /entrypoint.sh
 
-RUN chmod +x /app/worker/run-pytest.sh /app/worker/healthcheck.sh
+RUN chmod +x /app/worker/run-pytest.sh /app/worker/healthcheck.sh /entrypoint.sh
 
 ENV PORT=8081
-EXPOSE 8081
+EXPOSE 8081 6080
 
-CMD ["python", "/app/worker/server.py"]
+ENTRYPOINT ["/entrypoint.sh"]

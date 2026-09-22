@@ -1,96 +1,72 @@
-import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { request as httpRequest } from "node:http";
 import { parse as parseUrl } from "node:url";
 import WebSocket, { WebSocketServer } from "ws";
+import type { AppConfig } from "../config.js";
 import { authDisabled } from "../middleware/auth.js";
-import type { RecorderService } from "../services/recorder-service.js";
+import type { RunService } from "../services/run-service.js";
 import { verifyVncToken } from "./vnc-tokens.js";
-
-const HOP_BY_HOP_HEADERS = new Set([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailers",
-  "transfer-encoding",
-  "upgrade",
-]);
+import { stripHopByHopHeaders } from "./vnc-proxy.js";
 
 const PROXY_TIMEOUT_MS = 30_000;
 
-export function stripHopByHopHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
-  const result: IncomingHttpHeaders = {};
-  for (const [key, value] of Object.entries(headers)) {
-    if (!HOP_BY_HOP_HEADERS.has(key.toLowerCase())) {
-      result[key] = value;
-    }
-  }
-  return result;
-}
-
-export function recorderVncHost(): string {
-  return process.env.RECORDER_VNC_HOST ?? "host.docker.internal";
-}
-
-export function parseVncProxyPath(pathname: string): { projectId: string; sessionId: string; subPath: string } | null {
-  const match = pathname.match(/^\/api\/projects\/([^/]+)\/record\/([^/]+)\/vnc(\/.*)?$/);
+export function parseRunVncProxyPath(
+  pathname: string,
+): { projectId: string; runId: string; subPath: string } | null {
+  const match = pathname.match(/^\/api\/projects\/([^/]+)\/runs\/([^/]+)\/vnc(\/.*)?$/);
   if (!match) return null;
   return {
     projectId: match[1]!,
-    sessionId: match[2]!,
+    runId: match[2]!,
     subPath: match[3] || "/vnc.html",
   };
 }
 
-async function resolveSession(
-  recorder: RecorderService,
+async function assertRunVncAllowed(
+  runService: RunService,
   projectId: string,
-  sessionId: string,
+  runId: string,
   token: string,
-): Promise<{ vncPort: number } | null> {
+): Promise<boolean> {
   if (!authDisabled()) {
-    const userId = verifyVncToken(token, sessionId, "record");
-    if (!userId) return null;
+    if (!verifyVncToken(token, runId, "run")) return false;
   }
-  const session = await recorder.getSession(projectId, sessionId);
-  if (!session?.vnc_port) return null;
-  await recorder.touchSession(sessionId);
-  return { vncPort: session.vnc_port };
+  const meta = await runService.getRunVncMeta(projectId, runId);
+  return meta !== null;
 }
 
-export async function proxyVncHttp(
+export async function proxyRunVncHttp(
   req: IncomingMessage,
   res: ServerResponse,
-  recorder: RecorderService,
+  runService: RunService,
+  config: AppConfig,
   projectId: string,
-  sessionId: string,
+  runId: string,
   subPath: string,
 ): Promise<void> {
   const url = parseUrl(req.url ?? "", false);
   const token = new URL(req.url ?? "", "http://localhost").searchParams.get("token") ?? "";
 
-  const resolved = await resolveSession(recorder, projectId, sessionId, token);
-  if (!resolved) {
+  const allowed = await assertRunVncAllowed(runService, projectId, runId, token);
+  if (!allowed) {
     res.statusCode = authDisabled() ? 404 : 401;
-    res.end(authDisabled() ? "Session not found" : "Unauthorized");
+    res.end(authDisabled() ? "Run VNC not available" : "Unauthorized");
     return;
   }
 
   const upstreamPath = `${subPath}${url.search ?? ""}`;
-  const host = recorderVncHost();
   const clientMethod = req.method ?? "GET";
   const upstreamMethod = clientMethod === "HEAD" ? "GET" : clientMethod;
   const proxyReq = httpRequest(
     {
-      hostname: host,
-      port: resolved.vncPort,
+      hostname: config.workerVncHost,
+      port: config.workerVncPort,
       path: upstreamPath,
       method: upstreamMethod,
       headers: {
         ...stripHopByHopHeaders(req.headers),
-        host: `${host}:${resolved.vncPort}`,
+        host: `${config.workerVncHost}:${config.workerVncPort}`,
       },
     },
     (proxyRes) => {
@@ -112,12 +88,12 @@ export async function proxyVncHttp(
     },
   );
   proxyReq.setTimeout(PROXY_TIMEOUT_MS, () => {
-    proxyReq.destroy(new Error("VNC proxy timeout"));
+    proxyReq.destroy(new Error("Run VNC proxy timeout"));
   });
   proxyReq.on("error", (err) => {
     if (!res.headersSent) {
       res.statusCode = 502;
-      res.end(`VNC proxy error: ${err.message}`);
+      res.end(`Run VNC proxy error: ${err.message}`);
     }
   });
   if (clientMethod === "GET" || clientMethod === "HEAD") {
@@ -127,14 +103,15 @@ export async function proxyVncHttp(
   }
 }
 
-export async function handleVncWebSocketUpgrade(
+export async function handleRunVncWebSocketUpgrade(
   req: IncomingMessage,
   socket: Socket,
   head: Buffer,
-  recorder: RecorderService,
+  runService: RunService,
+  config: AppConfig,
 ): Promise<void> {
   const pathname = parseUrl(req.url ?? "", false).pathname ?? "";
-  const parsed = parseVncProxyPath(pathname);
+  const parsed = parseRunVncProxyPath(pathname);
   if (!parsed) {
     socket.destroy();
     return;
@@ -142,15 +119,14 @@ export async function handleVncWebSocketUpgrade(
 
   const url = parseUrl(req.url ?? "", false);
   const token = new URL(req.url ?? "", "http://localhost").searchParams.get("token") ?? "";
-  const resolved = await resolveSession(recorder, parsed.projectId, parsed.sessionId, token);
-  if (!resolved) {
+  const allowed = await assertRunVncAllowed(runService, parsed.projectId, parsed.runId, token);
+  if (!allowed) {
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
     socket.destroy();
     return;
   }
 
-  const host = recorderVncHost();
-  const targetUrl = `ws://${host}:${resolved.vncPort}${parsed.subPath}${url.search ?? ""}`;
+  const targetUrl = `ws://${config.workerVncHost}:${config.workerVncPort}${parsed.subPath}${url.search ?? ""}`;
 
   const upgrade = new WebSocketServer({ noServer: true });
   upgrade.handleUpgrade(req, socket, head, (clientWs: WebSocket) => {

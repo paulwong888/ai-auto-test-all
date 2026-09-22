@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { fetchJson, uploadFile } from "../api/client.js";
 import { useWorkflow } from "../hooks/useWorkflow.js";
 import type { Project } from "../types/project.js";
+import { buildVncEmbedUrl, waitForVncReady } from "../utils/vncEmbed.js";
 
 type RecordTab = "upload" | "web";
 
@@ -22,31 +23,6 @@ function recordStartErrorMessage(err: unknown): string {
     return "系统录制会话已满，请停止其他项目的录制后重试";
   }
   return msg;
-}
-
-/** noVNC embed: scale 1280×720 remote desktop to fit iframe (default is 1:1 and clips bottom). */
-function buildVncEmbedUrl(vncUrl: string, vncToken?: string): string {
-  const params = new URLSearchParams();
-  params.set("resize", "scale");
-  params.set("autoconnect", "true");
-  params.set("reconnect", "true");
-  if (vncToken) params.set("token", vncToken);
-  return `${vncUrl}/vnc.html?${params.toString()}`;
-}
-
-async function waitForVncReady(vncPageUrl: string, maxAttempts = 15): Promise<boolean> {
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    try {
-      const res = await fetch(vncPageUrl, { method: "GET" });
-      if (res.ok) return true;
-    } catch {
-      // retry
-    }
-    if (attempt < maxAttempts - 1) {
-      await new Promise((r) => window.setTimeout(r, 1000));
-    }
-  }
-  return false;
 }
 
 export function RecordPage() {
