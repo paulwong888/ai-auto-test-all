@@ -81,6 +81,52 @@ export async function scanReactProject(
   };
 }
 
+function typeAnnotationToString(node: t.TSType | t.TSTypeAnnotation | null | undefined): string | undefined {
+  if (!node) return undefined;
+  const typeNode = t.isTSTypeAnnotation(node) ? node.typeAnnotation : node;
+  if (t.isTSStringKeyword(typeNode)) return "string";
+  if (t.isTSBooleanKeyword(typeNode)) return "boolean";
+  if (t.isTSNumberKeyword(typeNode)) return "number";
+  if (t.isTSAnyKeyword(typeNode)) return "any";
+  if (t.isTSVoidKeyword(typeNode)) return "void";
+  if (t.isTSTypeReference(typeNode) && t.isIdentifier(typeNode.typeName)) {
+    return typeNode.typeName.name;
+  }
+  if (t.isTSUnionType(typeNode)) {
+    return typeNode.types
+      .map((part) => typeAnnotationToString(part))
+      .filter(Boolean)
+      .join(" | ");
+  }
+  return undefined;
+}
+
+function extractPropsFromInterface(body: t.TSInterfaceBody): RawComponent["props"] {
+  const props: NonNullable<RawComponent["props"]> = [];
+  for (const member of body.body) {
+    if (!t.isTSPropertySignature(member) || !t.isIdentifier(member.key)) continue;
+    props.push({
+      name: member.key.name,
+      type: typeAnnotationToString(member.typeAnnotation),
+      required: !member.optional,
+    });
+  }
+  return props.length ? props : undefined;
+}
+
+function extractPropsFromTypeLiteral(typeLiteral: t.TSTypeLiteral): RawComponent["props"] {
+  const props: NonNullable<RawComponent["props"]> = [];
+  for (const member of typeLiteral.members) {
+    if (!t.isTSPropertySignature(member) || !t.isIdentifier(member.key)) continue;
+    props.push({
+      name: member.key.name,
+      type: typeAnnotationToString(member.typeAnnotation),
+      required: !member.optional,
+    });
+  }
+  return props.length ? props : undefined;
+}
+
 function parseFile(
   source: string,
   filePath: string,
@@ -94,10 +140,29 @@ function parseFile(
 
   let componentName: string | null = null;
   const state: Array<{ name: string; initial?: string }> = [];
+  const propsCollected: NonNullable<RawComponent["props"]> = [];
   const interactiveElements: InteractiveElement[] = [];
   const conditionalRendering: Array<{ condition: string; type?: string }> = [];
+  const featureFlags = new Set<string>();
+  let hasCreateContext = false;
+  let jsxElementCount = 0;
 
   traverse(ast, {
+    TSInterfaceDeclaration(pathNode: any) {
+      const id = pathNode.node.id?.name ?? "";
+      if (!/Props$/.test(id) && id !== "Props") return;
+      const extracted = extractPropsFromInterface(pathNode.node.body);
+      if (extracted) propsCollected.push(...extracted);
+    },
+    TSTypeAliasDeclaration(pathNode: any) {
+      const id = pathNode.node.id?.name ?? "";
+      if (!/Props$/.test(id) && id !== "Props") return;
+      const ann = pathNode.node.typeAnnotation;
+      if (t.isTSTypeLiteral(ann)) {
+        const extracted = extractPropsFromTypeLiteral(ann);
+        if (extracted) propsCollected.push(...extracted);
+      }
+    },
     ExportDefaultDeclaration(pathNode: any) {
       const decl = pathNode.node.declaration;
       if (t.isIdentifier(decl) && isPascalCase(decl.name)) {
@@ -122,24 +187,81 @@ function parseFile(
       }
     },
     CallExpression(pathNode: any) {
-      if (!t.isIdentifier(pathNode.node.callee)) return;
-      const callee = pathNode.node.callee.name;
-      if (callee === "useState" && pathNode.node.arguments[0]) {
-        const arg = pathNode.node.arguments[0];
-        const parent = pathNode.parentPath;
-        if (parent?.isVariableDeclarator?.() && t.isIdentifier(parent.node.id)) {
-          state.push({
-            name: parent.node.id.name,
-            initial: t.isStringLiteral(arg)
-              ? arg.value
-              : t.isNumericLiteral(arg)
-                ? String(arg.value)
-                : undefined,
-          });
+      const callee = pathNode.node.callee;
+      if (t.isIdentifier(callee)) {
+        const name = callee.name;
+        if (name === "useState" && pathNode.node.arguments[0]) {
+          const arg = pathNode.node.arguments[0];
+          const parent = pathNode.parentPath;
+          if (!parent?.isVariableDeclarator?.()) return;
+
+          let stateName: string | undefined;
+          const id = parent.node.id;
+          if (t.isIdentifier(id)) {
+            stateName = id.name;
+          } else if (
+            t.isArrayPattern(id) &&
+            id.elements[0] &&
+            t.isIdentifier(id.elements[0])
+          ) {
+            stateName = id.elements[0].name;
+          }
+
+          if (stateName) {
+            state.push({
+              name: stateName,
+              initial: t.isStringLiteral(arg)
+                ? arg.value
+                : t.isNumericLiteral(arg)
+                  ? String(arg.value)
+                  : undefined,
+            });
+          }
+        }
+        if (name === "useFeatureFlag" && pathNode.node.arguments[0]) {
+          const flagArg = pathNode.node.arguments[0];
+          if (t.isStringLiteral(flagArg)) featureFlags.add(flagArg.value);
+        }
+        if (name === "createContext") {
+          hasCreateContext = true;
+        }
+      }
+      if (t.isMemberExpression(callee) && t.isIdentifier(callee.property)) {
+        const prop = callee.property.name;
+        if (prop === "useFeatureFlag" && pathNode.node.arguments[0]) {
+          const flagArg = pathNode.node.arguments[0];
+          if (t.isStringLiteral(flagArg)) featureFlags.add(flagArg.value);
         }
       }
     },
+    MemberExpression(pathNode: any) {
+      const node = pathNode.node;
+      if (t.isIdentifier(node.property)) {
+        const prop = node.property.name;
+        if (
+          prop.startsWith("ENABLE_") ||
+          /feature/i.test(prop) ||
+          /flag/i.test(prop)
+        ) {
+          if (t.isIdentifier(node.object) && /feature|flag/i.test(node.object.name)) {
+            featureFlags.add(`${node.object.name}.${prop}`);
+          }
+        }
+      }
+      if (
+        t.isMemberExpression(node.object) &&
+        t.isIdentifier(node.object.object) &&
+        node.object.object.name === "process" &&
+        t.isIdentifier(node.object.property) &&
+        node.object.property.name === "env" &&
+        t.isIdentifier(node.property) &&
+        node.property.name.startsWith("ENABLE_")
+      ) {
+        featureFlags.add(`process.env.${node.property.name}`);
+      }
+    },
     JSXOpeningElement(pathNode: any) {
+      jsxElementCount += 1;
       const tag = jsxTagName(pathNode.node.name);
       if (!tag || !INTERACTIVE_TAGS.has(tag.toLowerCase())) return;
 
@@ -198,18 +320,35 @@ function parseFile(
   }
 
   const relPath = path.relative(frontendPath, filePath);
+  const props = dedupeProps(propsCollected);
+  const isProvider =
+    hasCreateContext && interactiveElements.length === 0 && jsxElementCount <= 2;
 
   return {
     name: componentName,
     type: "react",
     filePath: relPath,
+    props,
     state: state.length ? state : undefined,
     interactiveElements,
     conditionalRendering: conditionalRendering.length
       ? conditionalRendering
       : undefined,
-    featureFlags: [],
+    featureFlags: featureFlags.size ? [...featureFlags] : [],
+    pageKind: isProvider ? "provider" : undefined,
+    excludeFromPom: isProvider ? true : undefined,
   };
+}
+
+function dedupeProps(
+  props: NonNullable<RawComponent["props"]>,
+): RawComponent["props"] {
+  const seen = new Map<string, NonNullable<RawComponent["props"]>[number]>();
+  for (const prop of props) {
+    seen.set(prop.name, prop);
+  }
+  const values = [...seen.values()];
+  return values.length ? values : undefined;
 }
 
 function isPascalCase(name: string): boolean {

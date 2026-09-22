@@ -18,13 +18,16 @@ export function buildFixPrompt(runId: string): string {
     {
       "file": "tests/pages/example_page.py",
       "description": "修复定位器",
-      "unifiedDiff": "--- a/tests/pages/example_page.py\\n+++ b/tests/pages/example_page.py\\n@@ -1,3 +1,3 @@\\n-old\\n+new\\n"
+      "unifiedDiff": "--- a/tests/pages/example_page.py\\n+++ b/tests/pages/example_page.py\\n@@ -1,3 +1,3 @@\\n-old\\n+new\\n",
+      "newContent": null
     }
   ]
 }
 
 要求：
 - failingTests 从 run.log 提取
-- patches 使用 unified diff 格式，file 必须在 tests/ 目录下
-- 可直接修改 tests/ 下的 page 或 spec 文件以修复失败用例`;
+- patches 的 file 必须在 tests/ 目录下
+- 每个 patch 提供 unifiedDiff 或 newContent（二选一；小文件推荐 newContent 整文件替换）
+- unifiedDiff 必须是标准 git diff：多个 hunk 时每个 @@ 头单独成行，不可把 @@ 头写进 +/- 行里；行数必须与 @@ 声明一致
+- 不要直接修改源文件，只写入 fix-analysis.json；由用户点击「应用」后再改代码`;
 }

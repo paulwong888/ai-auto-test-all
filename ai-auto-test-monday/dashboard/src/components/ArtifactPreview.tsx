@@ -322,6 +322,20 @@ export function previewMetaForArtifact(
       reg?.components?.length ?? reg?.scanStats?.componentsFound ?? 0;
     return count ? `组件数: ${count}` : "";
   }
+  if (artifactKey === "route-config") {
+    const data = tryParseJson<{ routes?: unknown[]; navLinks?: unknown[] }>(content);
+    if (data?.routes) {
+      return `路由: ${data.routes.length} · 导航链: ${data.navLinks?.length ?? 0}`;
+    }
+  }
+  if (artifactKey === "permission-model") {
+    const data = tryParseJson<{ guards?: unknown[]; summary?: { businessFlowCount?: number } }>(
+      content,
+    );
+    if (data?.guards) {
+      return `守卫: ${data.guards.length} · 业务流: ${data.summary?.businessFlowCount ?? 0}`;
+    }
+  }
   if (artifactKey === "injections") {
     const data = tryParseJson<InjectionsPreview>(content);
     return data?.patches ? `补丁数: ${data.patches.length}` : "";

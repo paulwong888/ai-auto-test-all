@@ -4,6 +4,7 @@ import type {
   Journey,
   JourneyStep,
   LocatorCatalog,
+  RouteConfigDocument,
 } from "../artifacts/types.js";
 import { specGenerationSchema } from "../artifacts/types.js";
 import { loadLlmConfigFromEnv } from "../config.js";
@@ -196,6 +197,7 @@ Import POMs from '../poms/{ClassName}'. Use test.describe + test.beforeEach + si
 Return JSON { files: [{ fileName, content }] } with one file.`,
     JSON.stringify({ journey, targetUrl, pomSnippets }),
     specGenerationSchema,
+    "spec_generation",
   );
 
   const content = result?.files?.[0]?.content;
@@ -272,6 +274,21 @@ function resolveSpecContent(
   return buildDeterministicSpec(journey, targetUrl, methods, e2eAuth);
 }
 
+async function loadRouteConfig(
+  artifactRoot: string | undefined,
+): Promise<RouteConfigDocument | null> {
+  if (!artifactRoot) return null;
+  try {
+    const raw = await readFile(
+      path.join(artifactRoot, "route-config.json"),
+      "utf8",
+    );
+    return JSON.parse(raw) as RouteConfigDocument;
+  } catch {
+    return null;
+  }
+}
+
 async function loadRegistry(
   input: AssistantDirectorInput,
 ): Promise<ComponentRegistry | null> {
@@ -293,6 +310,7 @@ export async function runAssistantDirector(
 ): Promise<SpecFile[]> {
   const targetUrl = input.targetUrl ?? input.journeysDoc.targetUrl ?? "/";
   const registry = await loadRegistry(input);
+  const routeConfig = await loadRouteConfig(input.artifactRoot);
   let journeys = [...input.journeysDoc.journeys].sort((a, b) =>
     a.id.localeCompare(b.id),
   );
@@ -302,6 +320,7 @@ export async function runAssistantDirector(
       registry,
       targetUrl,
       e2eAuth: input.e2eAuth,
+      routeConfig: routeConfig ?? undefined,
     });
     if (input.artifactRoot) {
       const updatedDoc: JourneysDocument = {

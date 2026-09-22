@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE="${BASE:-http://localhost:3001}"
+BASE="${BASE:-http://localhost:3002}"
 
 echo "==> 1. Health + queue infra"
 curl -sf "$BASE/health" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok")'

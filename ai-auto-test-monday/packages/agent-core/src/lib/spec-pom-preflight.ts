@@ -46,8 +46,13 @@ export function findSpecPomMethodMismatches(
 }
 
 export function journeyNeedsUnauthenticatedContext(journey: {
-  category?: string;
-  steps: Array<{ method: string; description?: string; action: string; args?: unknown[] }>;
+  category?: string | null;
+  steps: Array<{
+    method: string;
+    description?: string | null;
+    action: string;
+    args?: unknown[] | null;
+  }>;
 }): boolean {
   if (
     journey.steps.some(

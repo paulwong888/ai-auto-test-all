@@ -4,7 +4,7 @@ import { Context } from "@temporalio/activity";
 import type { PipelineInput } from "@monday/agent-core/workflow";
 import { toRelativeArtifactKey } from "@monday/agent-core";
 import {
-  runScriptAnalyst,
+  runScriptAnalystDetailed,
   runStageManager,
   applyStageManagerPatches,
   runBlockingCoach,
@@ -20,6 +20,10 @@ import {
   type TestIdInjections,
   type LocatorCatalog,
   type JourneysDocument,
+  routeConfigSchema,
+  permissionModelSchema,
+  type RouteConfigDocument,
+  type PermissionModelDocument,
 } from "@monday/agent-core";
 import { publishProgress } from "../lib/redis.js";
 import {
@@ -105,6 +109,26 @@ async function readRegistry(root: string): Promise<ComponentRegistry> {
   return JSON.parse(raw) as ComponentRegistry;
 }
 
+async function readRouteConfig(root: string): Promise<RouteConfigDocument | undefined> {
+  try {
+    const raw = await readFile(path.join(root, "route-config.json"), "utf8");
+    return routeConfigSchema.parse(JSON.parse(raw));
+  } catch {
+    return undefined;
+  }
+}
+
+async function readPermissionModel(
+  root: string,
+): Promise<PermissionModelDocument | undefined> {
+  try {
+    const raw = await readFile(path.join(root, "permission-model.json"), "utf8");
+    return permissionModelSchema.parse(JSON.parse(raw));
+  } catch {
+    return undefined;
+  }
+}
+
 async function readInjections(root: string): Promise<TestIdInjections> {
   const raw = await readFile(path.join(root, "testid-injections.json"), "utf8");
   return JSON.parse(raw) as TestIdInjections;
@@ -113,7 +137,14 @@ async function readInjections(root: string): Promise<TestIdInjections> {
 async function scriptAnalystImpl(input: PipelineInput): Promise<void> {
   throwIfCancelled();
 
-  const registry = await runScriptAnalyst({
+  const {
+    registry,
+    routeConfig,
+    permissionModel,
+    llmReconciledBatches,
+    readOnlyPages,
+    featureFlagCount,
+  } = await runScriptAnalystDetailed({
     projectId: input.projectId,
     runId: input.runId,
     frontendPath: input.frontendPath,
@@ -123,7 +154,30 @@ async function scriptAnalystImpl(input: PipelineInput): Promise<void> {
   await writeJson(out, registry);
   await insertArtifactIndex(input.runId, "scriptAnalyst", "registry", relKey(input, out), {
     componentCount: registry.components.length,
+    readOnlyPages,
+    featureFlagCount,
+    llmReconciledBatches,
   });
+
+  const routeOut = path.join(input.artifactRoot, "route-config.json");
+  await writeJson(routeOut, routeConfig);
+  await insertArtifactIndex(input.runId, "scriptAnalyst", "route-config", relKey(input, routeOut), {
+    routeCount: routeConfig.routes.length,
+    navLinkCount: routeConfig.navLinks?.length ?? 0,
+  });
+
+  const permOut = path.join(input.artifactRoot, "permission-model.json");
+  await writeJson(permOut, permissionModel);
+  await insertArtifactIndex(
+    input.runId,
+    "scriptAnalyst",
+    "permission-model",
+    relKey(input, permOut),
+    {
+      guardCount: permissionModel.guards.length,
+      businessFlowCount: permissionModel.summary.businessFlowCount,
+    },
+  );
 
   throwIfCancelled();
 }
@@ -244,10 +298,15 @@ async function choreographerImpl(input: PipelineInput): Promise<void> {
     `[choreographer] availablePoms=${availablePoms.join(", ")} runId=${input.runId}`,
   );
 
+  const routeConfig = await readRouteConfig(input.artifactRoot);
+  const permissionModel = await readPermissionModel(input.artifactRoot);
+
   const doc = await runChoreographer({
     registry,
     targetUrl: input.targetUrl,
     availablePoms,
+    routeConfig,
+    permissionModel,
   });
 
   console.info(

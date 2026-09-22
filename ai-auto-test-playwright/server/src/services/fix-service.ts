@@ -208,7 +208,7 @@ export class FixService {
     suggestionId: string | null;
     failingTests: FailingTest[];
     analysis: string;
-    patches: Array<{ file: string; unifiedDiff: string; description?: string }>;
+    patches: Array<{ file: string; unifiedDiff?: string; newContent?: string; description?: string }>;
     tracePaths: string[];
     iteration: number | null;
   } | null> {

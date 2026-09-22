@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE="${BASE:-http://localhost:3001}"
+BASE="${BASE:-http://localhost:3002}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REFERENCE_TESTS="$(cd "$SCRIPT_DIR/../.." && pwd)/tests"
 WORKSPACE_NAME="rbac-demo-$$"

@@ -115,6 +115,7 @@ async function generateWithLlmBatch(
     `Generate Playwright Page Object Model TypeScript files. Each class declares "private readonly page: Page;" as a field and assigns it explicitly in the constructor body: "constructor(page: Page) { this.page = page; ... }". Do NOT use TypeScript parameter properties (e.g. constructor(private readonly page: Page)) — they break at runtime. Use semantic method names. Export classes. Return JSON { files: [{ fileName, content }] }. Generate exactly ${components.length} POM files, one per component.`,
     JSON.stringify({ components: summary }),
     pomGenerationSchema,
+    "pom_generation",
   );
 
   if (!result?.files?.length) return [];

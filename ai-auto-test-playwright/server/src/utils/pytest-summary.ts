@@ -1,5 +1,6 @@
 const PASSED_RE = /(\d+)\s+passed/i;
 const FAILED_RE = /(\d+)\s+failed/i;
+const ERROR_RE = /(\d+)\s+errors?/i;
 const SKIPPED_RE = /(\d+)\s+skipped/i;
 const DURATION_RE = /in\s+([\d.]+)s/i;
 
@@ -16,15 +17,17 @@ export function parsePytestSummaryFromLogs(logLines: string[]): {
 
   for (let i = logLines.length - 1; i >= 0; i -= 1) {
     const line = logLines[i] ?? "";
-    if (!/passed|failed|skipped/i.test(line)) continue;
+    if (!/passed|failed|error|skipped/i.test(line)) continue;
 
     if (passed === 0) {
       const m = PASSED_RE.exec(line);
       if (m) passed = Number(m[1]);
     }
     if (failed === 0) {
-      const m = FAILED_RE.exec(line);
-      if (m) failed = Number(m[1]);
+      const failedMatch = FAILED_RE.exec(line);
+      const errorMatch = ERROR_RE.exec(line);
+      failed =
+        (failedMatch ? Number(failedMatch[1]) : 0) + (errorMatch ? Number(errorMatch[1]) : 0);
     }
     if (skipped === 0) {
       const m = SKIPPED_RE.exec(line);

@@ -3,6 +3,8 @@ import type {
   JourneysDocument,
   Journey,
   JourneyStep,
+  PermissionModelDocument,
+  RouteConfigDocument,
 } from "../artifacts/types.js";
 import {
   JOURNEY_CATEGORIES,
@@ -14,6 +16,7 @@ import {
   loadPipelineScaleConfigFromEnv,
 } from "../config.js";
 import { HigressClient } from "../llm/higress-client.js";
+import { buildComponentRoutesMap } from "../lib/component-route-index.js";
 import { normalizeJourneysForExecution } from "../lib/journey-normalize.js";
 import {
   chunk,
@@ -26,6 +29,61 @@ export interface ChoreographerInput {
   registry: ComponentRegistry;
   targetUrl?: string;
   availablePoms: string[];
+  routeConfig?: RouteConfigDocument;
+  permissionModel?: PermissionModelDocument;
+}
+
+function buildRoutePermissionContext(input: ChoreographerInput) {
+  const routes = input.routeConfig?.routes ?? [];
+  const navLinks = input.routeConfig?.navLinks ?? [];
+  const guards =
+    input.permissionModel?.guards.filter((g) => g.guardType !== "none") ?? [];
+
+  if (routes.length === 0 && navLinks.length === 0 && guards.length === 0) {
+    return undefined;
+  }
+
+  const componentRoutes =
+    routes.length > 0
+      ? buildComponentRoutesMap(input.registry, routes)
+      : undefined;
+
+  return {
+    routes: routes.map((r) => ({
+      path: r.path,
+      component: r.component,
+      public: r.public ?? true,
+      requiresFeatureFlag: r.requiresFeatureFlag,
+    })),
+    navLinks: navLinks.map((l) => ({
+      from: l.fromComponent,
+      to: l.toPath,
+      testId: l.testId,
+    })),
+    guards: guards.map((g) => ({
+      route: g.route,
+      allowedRoles: g.allowedRoles,
+      guardType: g.guardType,
+      unauthenticatedBehavior: g.unauthenticatedBehavior,
+      evidence: g.evidence,
+    })),
+    componentRoutes,
+  };
+}
+
+function routePermissionPromptBlock(input: ChoreographerInput): string {
+  const ctx = buildRoutePermissionContext(input);
+  if (!ctx) return "";
+
+  return `
+Use routeConfig and permissionModel when planning journeys:
+- For routes with guardType route-guard or business-flow, plan Permission Boundary journeys (unauthenticated redirect or login-required access).
+- For navLinks, plan Cross-Page journeys that follow link navigation between pages.
+- business-flow guards mean auth is enforced in login success navigation, not necessarily a router PrivateRoute.
+- For navigateTo steps, path MUST come from componentRoutes[componentName] in the context below. Do NOT invent paths.
+- Path casing MUST match componentRoutes exactly (e.g. cancelOrder not CancelOrder).
+Route/permission context:
+${JSON.stringify(ctx)}`;
 }
 
 function componentsForPoms(
@@ -34,7 +92,13 @@ function componentsForPoms(
 ) {
   const names = new Set(poms.map((p) => componentNameFromPomClass(p)));
   return registry.components
-    .filter((c) => names.has(c.name) && c.interactiveElements.length > 0)
+    .filter(
+      (c) =>
+        names.has(c.name) &&
+        (c.interactiveElements.length > 0 ||
+          c.pageKind === "read-only" ||
+          c.name.endsWith("Page")),
+    )
     .map((c) => ({
       name: c.name,
       businessSemantics: c.businessSemantics ?? "",
@@ -84,13 +148,16 @@ function normalizeJourneySteps(journey: Journey): Journey {
 
 function postProcessJourneys(
   journeys: Journey[],
-  registry: ComponentRegistry,
-  targetUrl?: string,
+  input: ChoreographerInput,
 ): Journey[] {
   const normalized = journeys
     .map(normalizeJourneySteps)
     .map((j) => ({ ...j, priority: j.priority ?? "P1" }));
-  return normalizeJourneysForExecution(normalized, { registry, targetUrl });
+  return normalizeJourneysForExecution(normalized, {
+    registry: input.registry,
+    targetUrl: input.targetUrl,
+    routeConfig: input.routeConfig,
+  });
 }
 
 function filterValidJourneys(
@@ -106,15 +173,14 @@ function filterValidJourneys(
 }
 
 async function generateBatchWithLlm(
-  registry: ComponentRegistry,
-  targetUrl: string | undefined,
+  input: ChoreographerInput,
   batchPoms: string[],
   journeyMin: number,
   journeyMax: number,
   batchIndex: number,
   batchCount: number,
 ): Promise<Journey[]> {
-  const components = componentsForPoms(registry, batchPoms);
+  const components = componentsForPoms(input.registry, batchPoms);
   const llm = new HigressClient(loadChoreographerLlmConfigFromEnv(), "choreographer");
 
   console.info(
@@ -131,13 +197,15 @@ Method vocabulary (use ONLY these patterns): navigateTo, waitForReady, enterUser
 Do NOT invent names like fillTextInput or fillPasswordInput.
 For login success journeys: after submitLogin use assertRedirectToDashboard and assertLoginSuccessVisible (not assertLinkVisible on home).
 For Permission Boundary on public home pages: use HomePage assertLinkVisible for go-login, then clickGoLoginLink + LoginPage assertFormVisible.
-Use only POM class names from availablePoms. Create at least one journey per POM in availablePoms. Vary categories across journeys when possible.`,
+Use only POM class names from availablePoms. Create at least one journey per POM in availablePoms. Vary categories across journeys when possible.${routePermissionPromptBlock(input)}`,
     JSON.stringify({
-      targetUrl: targetUrl ?? "",
+      targetUrl: input.targetUrl ?? "",
       availablePoms: batchPoms,
       components,
+      routePermission: buildRoutePermissionContext(input),
     }),
     journeyGenerationFromLlmSchema,
+    "journey_generation",
   );
 
   if (!result?.journeys?.length) {
@@ -158,18 +226,15 @@ Use only POM class names from availablePoms. Create at least one journey per POM
       category: j.category as Journey["category"],
       priority: j.priority ?? "P1",
     })),
-    registry,
-    targetUrl,
+    input,
   );
 }
 
 async function generateWithLlmBatched(
-  registry: ComponentRegistry,
-  targetUrl: string | undefined,
-  availablePoms: string[],
+  input: ChoreographerInput,
   batchSize: number,
 ): Promise<Journey[]> {
-  const batches = chunk(availablePoms, batchSize);
+  const batches = chunk(input.availablePoms, batchSize);
   const merged: Journey[] = [];
 
   for (let i = 0; i < batches.length; i += 1) {
@@ -178,8 +243,7 @@ async function generateWithLlmBatched(
     const journeyMax = batchPoms.length;
     try {
       const batchJourneys = await generateBatchWithLlm(
-        registry,
-        targetUrl,
+        input,
         batchPoms,
         journeyMin,
         journeyMax,
@@ -199,13 +263,11 @@ async function generateWithLlmBatched(
 }
 
 async function generateWithLlm(
-  registry: ComponentRegistry,
-  targetUrl: string | undefined,
-  availablePoms: string[],
+  input: ChoreographerInput,
   journeyMin: number,
   journeyMax: number,
 ): Promise<Journey[]> {
-  const components = componentsForPoms(registry, availablePoms);
+  const components = componentsForPoms(input.registry, input.availablePoms);
   const llm = new HigressClient(loadChoreographerLlmConfigFromEnv(), "choreographer");
 
   let result;
@@ -220,13 +282,16 @@ Method vocabulary (use ONLY these patterns): navigateTo, waitForReady, enterUser
 Do NOT invent names like fillTextInput or fillPasswordInput.
 For login success journeys: after submitLogin use assertRedirectToDashboard and assertLoginSuccessVisible.
 For Permission Boundary on public home pages: use HomePage assertLinkVisible, then clickGoLoginLink + LoginPage assertFormVisible.
-Use only POM class names from availablePoms. Cover different top components across journeys.`,
+Use only POM class names from availablePoms. Cover different top components across journeys.
+For navigateTo steps, path MUST come from componentRoutes[componentName]. Do NOT invent paths. Match casing exactly.${routePermissionPromptBlock(input)}`,
       JSON.stringify({
-        targetUrl: targetUrl ?? "",
-        availablePoms,
+        targetUrl: input.targetUrl ?? "",
+        availablePoms: input.availablePoms,
         components,
+        routePermission: buildRoutePermissionContext(input),
       }),
       journeyGenerationFromLlmSchema,
+      "journey_generation",
     );
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
@@ -239,7 +304,7 @@ Use only POM class names from availablePoms. Cover different top components acro
     );
   }
 
-  const pomSet = new Set(availablePoms);
+  const pomSet = new Set(input.availablePoms);
   const valid = filterValidJourneys(result.journeys as Journey[], pomSet);
 
   if (valid.length < journeyMin) {
@@ -254,8 +319,7 @@ Use only POM class names from availablePoms. Cover different top components acro
       category: j.category as Journey["category"],
       priority: j.priority ?? "P1",
     })),
-    registry,
-    targetUrl,
+    input,
   );
 }
 
@@ -305,21 +369,10 @@ export async function runChoreographer(
 
   let journeys: Journey[];
   if (scale.fullCoverage && availablePoms.length > scale.choreographerBatchSize) {
-    journeys = await generateWithLlmBatched(
-      input.registry,
-      input.targetUrl,
-      availablePoms,
-      scale.choreographerBatchSize,
-    );
+    journeys = await generateWithLlmBatched(input, scale.choreographerBatchSize);
   } else {
     try {
-      journeys = await generateWithLlm(
-        input.registry,
-        input.targetUrl,
-        availablePoms,
-        journeyMin,
-        journeyMax,
-      );
+      journeys = await generateWithLlm(input, journeyMin, journeyMax);
     } catch (err) {
       if (!scale.fullCoverage) throw err;
       console.warn(

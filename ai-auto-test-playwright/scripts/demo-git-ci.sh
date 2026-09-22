@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE="${BASE:-http://localhost:3001}"
+BASE="${BASE:-http://localhost:3002}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GIT_REPO_URL="${GIT_REPO_URL:-git@github.com:paulwong888/ai-auto-test-all.git}"
 GIT_DEFAULT_BRANCH="${GIT_DEFAULT_BRANCH:-main}"

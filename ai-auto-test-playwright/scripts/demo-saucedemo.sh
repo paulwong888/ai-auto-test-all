@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE="${BASE:-http://localhost:3001}"
+BASE="${BASE:-http://localhost:3002}"
 MODE="${MODE:-debug}"
 SEED_TESTS="${SEED_TESTS:-auto}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type { AppConfig } from "../config.js";
 import { AppError } from "../errors.js";
 import { PiRpcClient } from "../pi/rpc-client.js";
@@ -117,7 +118,7 @@ export class PiJobRunner {
     if (!handle) return;
 
     const client = new PiRpcClient({
-      cwd: ctx.workspacePath,
+      cwd: path.join(ctx.workspacePath, "tests"),
       piCliPath: this.config.pi.cliPath,
       rpcArgs: this.config.pi.rpcArgs,
       commandTimeoutMs: 30_000,
@@ -132,6 +133,11 @@ export class PiJobRunner {
 
       await client.promptAndWait(definition.buildPrompt(ctx, baseUrl), this.config.pi.runTimeoutMs);
       if (handle.cancelled) return;
+
+      const piError = client.getLastError();
+      if (piError) {
+        throw new Error(`Pi agent LLM error: ${piError}`);
+      }
 
       const result = await definition.validateOutput(ctx);
       handle.job.status = "completed";

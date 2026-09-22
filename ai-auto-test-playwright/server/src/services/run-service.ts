@@ -98,6 +98,7 @@ export class RunService {
 
     const runOptions: PytestRunOptions = {
       workspacePath: project.workspacePath,
+      baseUrl: project.baseUrl,
       headed: resolved.headed,
       slowmo: resolved.slowmo,
       specFilter: resolved.specFilter,

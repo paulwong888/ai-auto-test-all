@@ -67,7 +67,8 @@ export interface FailingTest {
 
 export interface FixPatch {
   file: string;
-  unifiedDiff: string;
+  unifiedDiff?: string;
+  newContent?: string;
   description?: string;
 }
 

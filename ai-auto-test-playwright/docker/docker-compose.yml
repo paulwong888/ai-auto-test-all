@@ -2,6 +2,7 @@ name: ${COMPOSE_PROJECT_NAME:-ai-auto-test-playwright}
 
 services:
   postgres:
+    profiles: ["with-postgres"]
     image: postgres:16-alpine
     container_name: ${POSTGRES_CONTAINER_NAME:-ai-auto-test-playwright-postgres}
     environment:
@@ -21,6 +22,7 @@ services:
       retries: 10
 
   redis:
+    profiles: ["with-redis"]
     image: redis:7-alpine
     container_name: ${REDIS_CONTAINER_NAME:-ai-auto-test-playwright-redis}
     ports:
@@ -59,16 +61,17 @@ services:
       - .env.local
     environment:
       HOST: ${HOST:-0.0.0.0}
-      PORT: ${PORT:-3001}
+      PORT: ${PORT:-3002}
       WORKER_URL: ${WORKER_URL:-http://worker:8081}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       AUTH_DISABLED: ${AUTH_DISABLED:-true}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
       MASTER_KEY: ${MASTER_KEY:-dev-master-key}
       RECORDER_IMAGE: ${RECORDER_IMAGE:-ai-auto-test-playwright-recorder:latest}
+      RECORDER_IGNORE_HTTPS_ERRORS: ${RECORDER_IGNORE_HTTPS_ERRORS:-1}
       RECORDER_VNC_HOST: ${RECORDER_VNC_HOST:-host.docker.internal}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-ai_auto_test_playwright}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -83,19 +86,25 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "${SERVER_PORT:-3001}:${PORT:-3001}"
+      - "${SERVER_PORT:-3002}:${PORT:-3002}"
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       redis:
         condition: service_started
+        required: false
       worker:
         condition: service_healthy
     networks:
       - app-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:'+(process.env.PORT||3002)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -107,7 +116,7 @@ services:
       context: ..
       dockerfile: docker/dashboard/Dockerfile
     ports:
-      - "${DASHBOARD_PORT:-8040}:80"
+      - "${DASHBOARD_PORT:-8041}:80"
     depends_on:
       server:
         condition: service_healthy

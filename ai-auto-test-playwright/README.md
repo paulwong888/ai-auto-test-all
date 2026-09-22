@@ -14,11 +14,11 @@ Web 化 Playwright pytest E2E 自动化平台（MVP v0.1.0）。
 
 ```bash
 cd docker
-cp .env.example .env
-cp .env.local.example .env.local   # 填入 DASHSCOPE_API_KEY
-docker-compose up --build -d
-# 若无 docker compose 插件，用 docker-compose；若有则用 docker compose up --build -d
+./start.sh
+# 或手动：cp .env.example .env && cp .env.local.example .env.local && docker compose up --build -d
 ```
+
+`start.sh` 会自动检测本机 Postgres/Redis：若 `5432/5433`、`6379` 已有服务则复用本地实例，否则启动 compose 内置容器。可用 `USE_LOCAL_POSTGRES=0`、`USE_LOCAL_REDIS=0` 强制使用内置容器。
 
 Pi / 阿里云百炼：编辑 `docker/.env.local`，填入 `DASHSCOPE_API_KEY`（[百炼控制台](https://bailian.console.aliyun.com/)）。验证：
 
@@ -30,12 +30,12 @@ docker exec ai-auto-test-playwright-server pi --version
 
 | 服务 | 地址 |
 |------|------|
-| **Web Dashboard** | http://localhost:8040 |
-| API（直连） | http://localhost:3001 |
-| Health（经 Dashboard 反代） | http://localhost:8040/health |
+| **Web Dashboard** | http://localhost:8041 |
+| API（直连） | http://localhost:3002 |
+| Health（经 Dashboard 反代） | http://localhost:8041/health |
 | PostgreSQL | localhost:5434 |
 
-打开 Dashboard：http://localhost:8040/projects
+打开 Dashboard：http://localhost:8041/projects
 
 ## Demo 脚本（MVP 验收）
 
@@ -58,8 +58,8 @@ SEED_TESTS=always ./scripts/demo-saucedemo.sh
 
 ```bash
 cd docker && docker-compose up --build -d
-curl http://localhost:8040/health
-curl http://localhost:8040/projects   # 浏览器打开
+curl http://localhost:8041/health
+curl http://localhost:8041/projects   # 浏览器打开
 
 SEED_TESTS=always MODE=ci ../scripts/demo-saucedemo.sh
 ```
@@ -68,8 +68,8 @@ SEED_TESTS=always MODE=ci ../scripts/demo-saucedemo.sh
 
 ```bash
 npm install
-npm run dev -w server          # API :3001
-npm run dev:dashboard          # UI :8040（代理 /api /ws → 3001）
+npm run dev -w server          # API :3002
+npm run dev:dashboard          # UI :8041（代理 /api /ws → 3002）
 ```
 
 Server 环境：`cd server && cp ../docker/.env.example .env`，设置 `POSTGRES_HOST=localhost`、`POSTGRES_PORT=5434`。

@@ -9,6 +9,18 @@ import { pool } from "../db/pool.js";
 import { apiArtifactStore, runArtifactPrefix } from "../lib/artifact-store.js";
 import { getPipelineRun, isRunActivelyRunning } from "./pipeline-service.js";
 
+/** Artifact download name → relative path under run prefix (used by GET /artifacts/:name). */
+export const ARTIFACT_FILE_MAP: Record<string, string> = {
+  registry: "component-registry.json",
+  "route-config": "route-config.json",
+  "permission-model": "permission-model.json",
+  injections: "testid-injections.json",
+  locators: "locator-catalog.json",
+  journeys: "journeys.json",
+  "execution-report": "execution-report.json",
+  "apply-report": "apply-report.json",
+};
+
 export async function getPomCatalog(runId: string): Promise<{
   poms: string[];
   methods: Record<string, string[]>;
@@ -117,15 +129,7 @@ export async function getArtifactText(
     return { content, contentType: "text/plain" };
   }
 
-  const map: Record<string, string> = {
-    registry: "component-registry.json",
-    injections: "testid-injections.json",
-    locators: "locator-catalog.json",
-    journeys: "journeys.json",
-    "execution-report": "execution-report.json",
-    "apply-report": "apply-report.json",
-  };
-  const rel = map[name];
+  const rel = ARTIFACT_FILE_MAP[name];
   if (!rel) return null;
   const content = await store.getText(prefix, rel);
   if (content == null) return null;

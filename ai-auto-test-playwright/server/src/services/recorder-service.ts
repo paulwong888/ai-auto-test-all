@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { query } from "../db/pool.js";
 import { AppError } from "../errors.js";
 import Dockerode from "dockerode";
+import { WorkflowStateRepository } from "../repositories/workflow-state-repository.js";
 import type { ProjectService } from "./project-service.js";
 
 interface MountInfo {
@@ -37,6 +39,7 @@ export class RecorderService {
   private docker: Dockerode | null = null;
   private idleTimer: ReturnType<typeof setInterval> | null = null;
   private hostProjectsRoot: string | null = null;
+  private readonly workflowStates = new WorkflowStateRepository();
 
   constructor(private readonly projectService: ProjectService) {
     void this.initDocker();
@@ -126,6 +129,7 @@ export class RecorderService {
           `TARGET_URL=${targetUrl}`,
           `MODULE_NAME=${moduleName}`,
           `OUTPUT_PATH=/workspace/${outputPath}`,
+          `IGNORE_HTTPS_ERRORS=${process.env.RECORDER_IGNORE_HTTPS_ERRORS ?? "1"}`,
         ],
         HostConfig: {
           Binds: [`${hostWorkspace}:/workspace`],
@@ -181,7 +185,35 @@ export class RecorderService {
       `UPDATE recorder_sessions SET status = 'stopped', stopped_at = NOW() WHERE id = $1`,
       [sessionId],
     );
+
+    if (row.output_path) {
+      await this.markRecordedIfPresent(projectId, row.module_name, row.output_path);
+    }
+
     return { sessionId, outputPath: row.output_path };
+  }
+
+  private async markRecordedIfPresent(
+    projectId: string,
+    moduleName: string,
+    outputPath: string,
+  ): Promise<void> {
+    const project = await this.projectService.getById(projectId);
+    if (!project) return;
+
+    const absPath = path.join(project.workspacePath, outputPath);
+    try {
+      await fs.access(absPath);
+    } catch {
+      return;
+    }
+
+    await this.workflowStates.update(projectId, {
+      stage: "recorded",
+      stageStatus: "idle",
+      moduleName,
+      artifactPaths: { recorded: outputPath },
+    });
   }
 
   async getSession(projectId: string, sessionId: string) {

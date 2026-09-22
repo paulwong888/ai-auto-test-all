@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { applyPatch } from "diff";
 import { AppError } from "../errors.js";
 import type { FixPatch } from "./fix-patch-parser.js";
+import { applyUnifiedDiff } from "./apply-unified-diff.js";
 
 export function assertSafeTestPath(workspacePath: string, relativeFile: string): string {
   const normalized = path.normalize(relativeFile).replace(/^(\.\.(\/|\\|$))+/, "");
@@ -39,16 +39,32 @@ export class FixApplyService {
         await fs.writeFile(backupTarget, original);
       }
 
-      const patched = applyPatch(original, patch.unifiedDiff, { fuzzFactor: 2 });
-      if (patched === false) {
+      let nextContent: string;
+      if (patch.newContent !== undefined) {
+        nextContent = patch.newContent;
+      } else if (patch.unifiedDiff) {
+        const patched = applyUnifiedDiff(original, patch.unifiedDiff);
+        if (patched === false) {
+          throw new AppError(
+            "PATCH_APPLY_FAILED",
+            `Failed to apply patch to ${patch.file} (content may have changed; re-run analyze)`,
+            422,
+          );
+        }
+        nextContent = patched;
+      } else {
+        throw new AppError("INVALID_PATCH", `Patch for ${patch.file} has no diff or newContent`, 422);
+      }
+
+      if (nextContent.length === 0) {
         throw new AppError(
           "PATCH_APPLY_FAILED",
-          `Failed to apply patch to ${patch.file}`,
+          `Refusing to write empty content to ${patch.file}`,
           422,
         );
       }
 
-      await fs.writeFile(abs, patched);
+      await fs.writeFile(abs, nextContent);
       appliedFiles.push(patch.file);
     }
 

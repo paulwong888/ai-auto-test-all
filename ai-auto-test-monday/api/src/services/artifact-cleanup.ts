@@ -3,6 +3,8 @@ import type { ArtifactStore } from "@monday/agent-core";
 
 const DOWNSTREAM_FILES: Partial<Record<AgentId, string[]>> = {
   scriptAnalyst: [
+    "route-config.json",
+    "permission-model.json",
     "testid-injections.json",
     "locator-catalog.json",
     "journeys.json",

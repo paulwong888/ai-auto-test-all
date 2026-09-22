@@ -13,7 +13,7 @@ import type * as activities from "../activities/index.js";
 export const getPipelineProgress = defineQuery<PipelineProgress>(PROGRESS_QUERY);
 
 const scriptAnalystActivities = proxyActivities<typeof activities>({
-  startToCloseTimeout: "10 minutes",
+  startToCloseTimeout: "60 minutes",
   retry: { maximumAttempts: 2 },
   cancellationType: "TRY_CANCEL",
 });

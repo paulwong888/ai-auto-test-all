@@ -3,6 +3,8 @@ dist/
 .env
 docker/.env
 docker/.env.local
+docker/.infra.runtime
+docker/.ports.runtime
 docker/data/
 data/
 *.log

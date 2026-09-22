@@ -21,6 +21,9 @@ function recordStartErrorMessage(err: unknown): string {
   if (msg.includes("Global recorder session limit")) {
     return "系统录制会话已满，请停止其他项目的录制后重试";
   }
+  if (msg.includes("录制浏览器启动超时")) {
+    return "录制浏览器启动超时：可能是 HTTPS 证书不被信任或目标站点无法从服务器访问，请确认 base URL 可访问后重试";
+  }
   return msg;
 }
 

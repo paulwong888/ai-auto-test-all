@@ -2,7 +2,9 @@ import { AppError } from "../errors.js";
 
 export interface FixPatch {
   file: string;
-  unifiedDiff: string;
+  unifiedDiff?: string;
+  /** 完整文件内容；与 unifiedDiff 二选一，优先于 unifiedDiff */
+  newContent?: string;
   description?: string;
 }
 
@@ -50,17 +52,19 @@ export function parsePatchesArray(value: unknown): FixPatch[] {
     if (!item || typeof item !== "object") continue;
     const p = item as Record<string, unknown>;
     const file = typeof p.file === "string" ? p.file.trim() : "";
-    const unifiedDiff = typeof p.unifiedDiff === "string" ? p.unifiedDiff : "";
-    if (!file || !unifiedDiff.includes("@@")) {
+    const unifiedDiff = typeof p.unifiedDiff === "string" ? p.unifiedDiff : undefined;
+    const newContent = typeof p.newContent === "string" ? p.newContent : undefined;
+    if (!file || (!newContent && (!unifiedDiff || !unifiedDiff.includes("@@")))) {
       throw new AppError(
         "INVALID_PATCH",
-        "Each patch must have file and unifiedDiff with hunks",
+        "Each patch must have file and unifiedDiff (with hunks) or newContent",
         422,
       );
     }
     patches.push({
       file,
       unifiedDiff,
+      newContent,
       description: typeof p.description === "string" ? p.description : undefined,
     });
   }

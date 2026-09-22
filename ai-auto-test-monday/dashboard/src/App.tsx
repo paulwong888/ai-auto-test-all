@@ -43,6 +43,8 @@ function agentsBefore(fromAgent: string): string[] {
 
 const BASE_ARTIFACT_LINKS = [
   { key: "registry", label: "component-registry.json", agent: "scriptAnalyst" },
+  { key: "route-config", label: "route-config.json", agent: "scriptAnalyst" },
+  { key: "permission-model", label: "permission-model.json", agent: "scriptAnalyst" },
   { key: "injections", label: "testid-injections.json", agent: "stageManager" },
   { key: "locators", label: "locator-catalog.json", agent: "blockingCoach" },
   { key: "journeys", label: "journeys.json", agent: "choreographer" },
@@ -51,6 +53,8 @@ const BASE_ARTIFACT_LINKS = [
 
 const CORE_ARTIFACT_ORDER = [
   "registry",
+  "route-config",
+  "permission-model",
   "injections",
   "locators",
   "apply-report",

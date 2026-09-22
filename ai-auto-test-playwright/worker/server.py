@@ -18,6 +18,7 @@ RUN_TIMEOUT_MS = int(os.environ.get("RUN_TIMEOUT_MS", "600000"))
 POST_RUN_WAIT_SEC = int(os.environ.get("POST_RUN_WAIT_SEC", "30"))
 PASSED_RE = re.compile(r"(\d+)\s+passed", re.IGNORECASE)
 FAILED_RE = re.compile(r"(\d+)\s+failed", re.IGNORECASE)
+ERROR_RE = re.compile(r"(\d+)\s+errors?", re.IGNORECASE)
 SKIPPED_RE = re.compile(r"(\d+)\s+skipped", re.IGNORECASE)
 DURATION_RE = re.compile(r"in\s+([\d.]+)s", re.IGNORECASE)
 
@@ -29,16 +30,18 @@ def parse_pytest_summary(text: str) -> dict[str, int]:
     passed = failed = skipped = 0
     duration_ms = 0
     for line in reversed(text.splitlines()):
-        if "passed" not in line and "failed" not in line and "skipped" not in line:
+        if "passed" not in line and "failed" not in line and "error" not in line and "skipped" not in line:
             continue
         if passed == 0:
             m = PASSED_RE.search(line)
             if m:
                 passed = int(m.group(1))
         if failed == 0:
-            m = FAILED_RE.search(line)
-            if m:
-                failed = int(m.group(1))
+            failed_match = FAILED_RE.search(line)
+            error_match = ERROR_RE.search(line)
+            failed = (int(failed_match.group(1)) if failed_match else 0) + (
+                int(error_match.group(1)) if error_match else 0
+            )
         if skipped == 0:
             m = SKIPPED_RE.search(line)
             if m:

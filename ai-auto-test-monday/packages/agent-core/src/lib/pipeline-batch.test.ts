@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import {
   chunk,
   componentNameFromPomFile,
+  componentsWithElements,
   ensurePomCoverage,
 } from "./pipeline-batch.js";
+import type { ComponentRegistry } from "../artifacts/types.js";
 
 describe("chunk", () => {
   it("returns empty for empty input", () => {
@@ -33,6 +35,39 @@ describe("componentNameFromPomFile", () => {
       componentNameFromPomFile("MaterialUITablePage.ts"),
       "MaterialUITable",
     );
+  });
+});
+
+describe("componentsWithElements", () => {
+  it("includes read-only page components for POM generation", () => {
+    const registry: ComponentRegistry = {
+      version: "2.0",
+      projectId: "p",
+      runId: "r",
+      frontendPath: "/app",
+      scannedAt: new Date().toISOString(),
+      scanStats: { filesScanned: 1, componentsFound: 2, parseErrors: 0 },
+      components: [
+        {
+          name: "DashboardPage",
+          type: "react",
+          filePath: "src/pages/DashboardPage.tsx",
+          pageKind: "read-only",
+          interactiveElements: [],
+        },
+        {
+          name: "Provider",
+          type: "react",
+          filePath: "src/context/AuthProvider.tsx",
+          pageKind: "provider",
+          excludeFromPom: true,
+          interactiveElements: [],
+        },
+      ],
+    };
+
+    const targets = componentsWithElements(registry);
+    assert.deepEqual(targets.map((c) => c.name), ["DashboardPage"]);
   });
 });
 

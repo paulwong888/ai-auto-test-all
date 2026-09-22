@@ -970,6 +970,12 @@ function indexEntryToKey(
   if (artifactType === "registry") {
     return { key: "registry", label: "component-registry.json", kind: "json" };
   }
+  if (artifactType === "route-config") {
+    return { key: "route-config", label: "route-config.json", kind: "json" };
+  }
+  if (artifactType === "permission-model") {
+    return { key: "permission-model", label: "permission-model.json", kind: "json" };
+  }
   if (artifactType === "injections") {
     return { key: "injections", label: "testid-injections.json", kind: "json" };
   }

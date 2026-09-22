@@ -51,7 +51,7 @@ ai-auto-test-playwright/
 ├── package.json             # npm workspaces: server + dashboard
 ├── docker/                  # compose + Dockerfile
 ├── server/                  # Express 5 + TypeScript API
-├── dashboard/               # Vite + React（:8040）
+├── dashboard/               # Vite + React（:8041）
 ├── worker/                  # Python pytest Worker
 ├── templates/project-scaffold/
 ├── docker/skills/           # Pi skills（codegen / run-report / fix）
@@ -138,10 +138,10 @@ ai-auto-test-playwright/
 cd docker && docker-compose up --build -d
 # 部分环境请用 docker compose up --build -d
 
-curl http://localhost:8040/health
+curl http://localhost:8041/health
 # → server/database/worker: up
 
-open http://localhost:8040/projects
+open http://localhost:8041/projects
 
 # 全链路 demo（无 Pi 时预置 tests/）
 SEED_TESTS=always MODE=ci ../scripts/demo-saucedemo.sh
@@ -155,8 +155,8 @@ SEED_TESTS=always MODE=ci ../scripts/demo-saucedemo.sh
 
 ```bash
 npm install
-npm run dev -w server          # API :3001
-npm run dev:dashboard          # UI :8040（代理 /api /ws → 3001）
+npm run dev -w server          # API :3002
+npm run dev:dashboard          # UI :8041（代理 /api /ws → 3002）
 ```
 
 Server 环境：`cd server && cp ../docker/.env.example .env`，设置 `POSTGRES_HOST=localhost`、`POSTGRES_PORT=5434`。

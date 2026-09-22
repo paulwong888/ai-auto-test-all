@@ -16,7 +16,16 @@ export function chunk<T>(items: T[], size: number): T[][] {
 export function componentsWithElements(
   registry: ComponentRegistry,
 ): ComponentRegistry["components"] {
-  return registry.components.filter((c) => c.interactiveElements.length > 0);
+  return registry.components.filter((c) => {
+    if (c.excludeFromPom) return false;
+    if (c.interactiveElements.length > 0) return true;
+    const normalized = c.filePath.replace(/\\/g, "/");
+    const isPage =
+      normalized.includes("/pages/") ||
+      normalized.startsWith("pages/") ||
+      c.name.endsWith("Page");
+    return isPage && (c.pageKind === "read-only" || c.pageKind === "interactive" || !c.pageKind);
+  });
 }
 
 export function componentNameFromPomClass(pomClass: string): string {

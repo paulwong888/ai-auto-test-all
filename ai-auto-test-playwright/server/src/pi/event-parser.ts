@@ -13,6 +13,7 @@ export interface ParsedAgentStreamState {
   textBlocks: Map<number, string>;
   toolCallArgs: Map<string, string>;
   lastAssistantText: string;
+  lastError: string | null;
   settled: boolean;
   lastBashArgs: Record<string, unknown>;
 }
@@ -22,6 +23,7 @@ export function createStreamState(): ParsedAgentStreamState {
     textBlocks: new Map(),
     toolCallArgs: new Map(),
     lastAssistantText: "",
+    lastError: null,
     settled: false,
     lastBashArgs: {},
   };
@@ -75,9 +77,25 @@ function deriveProgressFromAgentEvent(
     }
     case "message_end": {
       const end = event as Extract<PiAgentEvent, { type: "message_end" }>;
-      const msg = end.message as { role?: string; content?: unknown };
+      const msg = end.message as {
+        role?: string;
+        content?: unknown;
+        errorMessage?: string;
+        stopReason?: string;
+      };
       if (msg?.role === "assistant" && typeof msg.content === "string") {
         state.lastAssistantText = msg.content;
+      }
+      if (msg?.errorMessage) {
+        state.lastError = msg.errorMessage;
+      }
+      break;
+    }
+    case "turn_end": {
+      const end = event as Extract<PiAgentEvent, { type: "turn_end" }>;
+      const msg = end.message as { errorMessage?: string } | undefined;
+      if (msg?.errorMessage) {
+        state.lastError = msg.errorMessage;
       }
       break;
     }

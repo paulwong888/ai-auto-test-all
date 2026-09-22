@@ -151,7 +151,12 @@ export class PiRpcClient extends EventEmitter {
   resetSettled(): void {
     this.streamState.settled = false;
     this.streamState.lastAssistantText = "";
+    this.streamState.lastError = null;
     this.streamState.textBlocks.clear();
+  }
+
+  getLastError(): string | null {
+    return this.streamState.lastError;
   }
 
   getLastAssistantText(): string {

@@ -38,9 +38,15 @@ export function loadLlmConfigFromEnv(
   };
 }
 
+function parseBoolEnv(value: string | undefined, defaultValue: boolean): boolean {
+  if (value == null || value.trim() === "") return defaultValue;
+  return !/^(0|false|no)$/i.test(value.trim());
+}
+
 export interface ScanConfig {
   maxFiles: number;
   maxComponents: number;
+  includeReadOnlyPages: boolean;
 }
 
 export function loadScanConfigFromEnv(
@@ -49,6 +55,72 @@ export function loadScanConfigFromEnv(
   return {
     maxFiles: Number(env.SCAN_MAX_FILES ?? 300),
     maxComponents: Number(env.SCAN_MAX_COMPONENTS ?? 80),
+    includeReadOnlyPages: parseBoolEnv(env.SCAN_INCLUDE_READ_ONLY_PAGES, true),
+  };
+}
+
+export interface RouteScanConfig {
+  maxFiles: number;
+}
+
+export function loadRouteScanConfigFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): RouteScanConfig {
+  return {
+    maxFiles: Number(env.ROUTE_SCAN_MAX_FILES ?? 5000),
+  };
+}
+
+export type ScriptAnalystLlmMode = "reconcile" | "enrich-only";
+
+export interface ScriptAnalystConfig {
+  llmMode: ScriptAnalystLlmMode;
+  batchFiles: number;
+  maxChars: number;
+  batchWeightLimit: number;
+  soloConditionalThreshold: number;
+}
+
+export function loadScriptAnalystConfigFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): ScriptAnalystConfig {
+  const modeRaw = (env.SCRIPT_ANALYST_LLM_MODE ?? "reconcile").trim();
+  const llmMode: ScriptAnalystLlmMode =
+    modeRaw === "enrich-only" ? "enrich-only" : "reconcile";
+  return {
+    llmMode,
+    batchFiles: Math.max(1, Number(env.SCRIPT_ANALYST_BATCH_FILES ?? 8)),
+    maxChars: Math.max(10_000, Number(env.SCRIPT_ANALYST_MAX_CHARS ?? 180_000)),
+    batchWeightLimit: Math.max(
+      1,
+      Number(env.SCRIPT_ANALYST_BATCH_WEIGHT_LIMIT ?? 8),
+    ),
+    soloConditionalThreshold: Math.max(
+      1,
+      Number(env.SCRIPT_ANALYST_SOLO_CONDITIONAL_THRESHOLD ?? 40),
+    ),
+  };
+}
+
+/** Optional longer timeout for Script Analyst reconcile batches. */
+export function loadScriptAnalystLlmConfigFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): LlmConfig {
+  const base = loadLlmConfigFromEnv(env);
+  const timeoutSec = Number(
+    env.SCRIPT_ANALYST_LLM_TIMEOUT ?? env.LLM_TIMEOUT ?? 1800,
+  );
+  const streamChunkTimeoutSec = Number(
+    env.SCRIPT_ANALYST_LLM_STREAM_CHUNK_TIMEOUT ??
+      env.SCRIPT_ANALYST_LLM_TIMEOUT ??
+      env.LLM_STREAM_CHUNK_TIMEOUT ??
+      timeoutSec,
+  );
+  return {
+    ...base,
+    timeoutMs: timeoutSec * 1000,
+    streamChunkTimeoutMs: streamChunkTimeoutSec * 1000,
+    maxRetries: Number(env.SCRIPT_ANALYST_LLM_MAX_RETRIES ?? env.LLM_MAX_RETRIES ?? 2),
   };
 }
 
@@ -70,11 +142,6 @@ export interface PipelineScaleConfig {
   pomBatchSize: number;
   choreographerBatchSize: number;
   fullCoverage: boolean;
-}
-
-function parseBoolEnv(value: string | undefined, defaultValue: boolean): boolean {
-  if (value == null || value.trim() === "") return defaultValue;
-  return !/^(0|false|no)$/i.test(value.trim());
 }
 
 export function loadPipelineScaleConfigFromEnv(

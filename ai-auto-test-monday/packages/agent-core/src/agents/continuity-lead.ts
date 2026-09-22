@@ -103,6 +103,19 @@ function buildJourneyById(journeys: Journey[]): Map<string, Journey> {
   return new Map(journeys.map((j) => [j.id, j]));
 }
 
+function formatExecutionProgress(
+  results: ExecutionResult[],
+  total: number,
+): string {
+  let passed = 0;
+  let failed = 0;
+  for (const r of results) {
+    if (r.status === "passed") passed += 1;
+    else if (r.status === "failed" || r.status === "flaky") failed += 1;
+  }
+  return `total=${total} passed=${passed} failed=${failed}`;
+}
+
 async function runDirectForJourneys(
   repoPath: string,
   targetUrl: string,
@@ -117,6 +130,7 @@ async function runDirectForJourneys(
   );
   await ensurePlaywrightBrowsers(repoPath);
   const results: ExecutionResult[] = [];
+  const total = specFiles.length;
   for (const specPath of specFiles) {
     throwIfCancelled(shouldCancel);
     const rel = path.relative(repoPath, specPath).replace(/\\/g, "/");
@@ -126,13 +140,16 @@ async function runDirectForJourneys(
     let passed = false;
     let durationMs = 0;
 
-    console.info(`[continuityLead] direct journey=${journeyId} spec=${rel}`);
+    const progress = () => formatExecutionProgress(results, total);
+    console.info(
+      `[continuityLead] direct journey=${journeyId} spec=${rel} ${progress()}`,
+    );
 
     while (attempts < 3 && !passed) {
       throwIfCancelled(shouldCancel);
       attempts += 1;
       console.info(
-        `[continuityLead] direct journey=${journeyId} attempt=${attempts}/3`,
+        `[continuityLead] direct journey=${journeyId} attempt=${attempts}/3 ${progress()}`,
       );
       const run = await runPlaywrightSpec({
         repoPath,
@@ -154,7 +171,7 @@ async function runDirectForJourneys(
           lastError.split("\n").find((l) => /Error|TypeError|expect\(/.test(l)) ??
           lastError.slice(0, 120);
         console.info(
-          `[continuityLead] direct journey=${journeyId} attempt=${attempts} failed type=${type} ${errLine.replace(/\s+/g, " ").trim()}`,
+          `[continuityLead] direct journey=${journeyId} attempt=${attempts} failed type=${type} ${progress()} ${errLine.replace(/\s+/g, " ").trim()}`,
         );
         if (type !== "C") break;
       }
@@ -165,10 +182,6 @@ async function runDirectForJourneys(
       : attempts > 1 && classifyFailure(lastError) === "C"
         ? "flaky"
         : "failed";
-    console.info(
-      `[continuityLead] direct journey=${journeyId} ${status} attempts=${attempts} durationMs=${durationMs}`,
-    );
-
     const journey = journeyById.get(journeyId);
     results.push({
       journeyId,
@@ -180,6 +193,9 @@ async function runDirectForJourneys(
       durationMs,
       executionMode: "direct",
     });
+    console.info(
+      `[continuityLead] direct journey=${journeyId} ${status} attempts=${attempts} durationMs=${durationMs} ${formatExecutionProgress(results, total)}`,
+    );
   }
   return results;
 }
@@ -248,19 +264,23 @@ export async function runContinuityLead(
       const features = journeysToFeatures(journeysDoc, repoPath);
       await platform.importFeatures(project.id, features);
 
+      const platformTotal = journeysToRun.length;
       for (const journey of journeysToRun) {
         throwIfCancelled(input.shouldCancel);
         let attempts = 0;
         let passed = false;
         let lastMessage = "";
+        const progress = () => formatExecutionProgress(results, platformTotal);
 
-        console.info(`[continuityLead] platform journey=${journey.id}`);
+        console.info(
+          `[continuityLead] platform journey=${journey.id} ${progress()}`,
+        );
 
         while (attempts < 3 && !passed) {
           throwIfCancelled(input.shouldCancel);
           attempts += 1;
           console.info(
-            `[continuityLead] platform journey=${journey.id} attempt=${attempts}/3`,
+            `[continuityLead] platform journey=${journey.id} attempt=${attempts}/3 ${progress()}`,
           );
           await platform.runFeature(project.id, journey.id);
           const outcome = await platform.waitForRunComplete();
@@ -268,7 +288,7 @@ export async function runContinuityLead(
           lastMessage = outcome.message;
           if (!passed) {
             console.info(
-              `[continuityLead] platform journey=${journey.id} attempt=${attempts} failed ${lastMessage.slice(0, 120).replace(/\s+/g, " ")}`,
+              `[continuityLead] platform journey=${journey.id} attempt=${attempts} failed ${progress()} ${lastMessage.slice(0, 120).replace(/\s+/g, " ")}`,
             );
           }
           if (!passed && classifyFailure(lastMessage) !== "C") break;
@@ -279,10 +299,6 @@ export async function runContinuityLead(
           : attempts > 1 && classifyFailure(lastMessage) === "C"
             ? "flaky"
             : "failed";
-        console.info(
-          `[continuityLead] platform journey=${journey.id} ${status} attempts=${attempts}`,
-        );
-
         results.push({
           journeyId: journey.id,
           title: journey.name,
@@ -292,6 +308,9 @@ export async function runContinuityLead(
           error: passed ? undefined : lastMessage.slice(0, 2000),
           executionMode: "platform",
         });
+        console.info(
+          `[continuityLead] platform journey=${journey.id} ${status} attempts=${attempts} ${formatExecutionProgress(results, platformTotal)}`,
+        );
       }
     } catch (err) {
       if (mode === "platform") {

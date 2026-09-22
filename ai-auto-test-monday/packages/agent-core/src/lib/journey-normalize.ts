@@ -2,8 +2,10 @@ import type {
   ComponentRegistry,
   Journey,
   JourneyStep,
+  RouteConfigDocument,
 } from "../artifacts/types.js";
 import type { E2eAuthConfig } from "../types.js";
+import { resolveJourneyNavigatePaths } from "./component-route-index.js";
 import { pomClassFromComponentName } from "./pipeline-batch.js";
 
 const CREDENTIAL_PLACEHOLDERS = new Set([
@@ -337,6 +339,7 @@ export function normalizeJourneysForExecution(
     registry: ComponentRegistry;
     targetUrl?: string;
     e2eAuth?: E2eAuthConfig;
+    routeConfig?: RouteConfigDocument;
   },
 ): Journey[] {
   let result = journeys.map((j) =>
@@ -345,5 +348,6 @@ export function normalizeJourneysForExecution(
   result = result.map((j) => normalizeLoginHappyPathJourney(j, opts.registry));
   result = result.map((j) => normalizeLoginCredentialSteps(j, opts.registry));
   result = injectE2eCredentials(result, opts.e2eAuth, opts.registry);
+  result = resolveJourneyNavigatePaths(result, opts.routeConfig, opts.registry);
   return result;
 }
