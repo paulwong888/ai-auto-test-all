@@ -24,6 +24,16 @@ function recordStartErrorMessage(err: unknown): string {
   return msg;
 }
 
+/** noVNC embed: scale 1280×720 remote desktop to fit iframe (default is 1:1 and clips bottom). */
+function buildVncEmbedUrl(vncUrl: string, vncToken?: string): string {
+  const params = new URLSearchParams();
+  params.set("resize", "scale");
+  params.set("autoconnect", "true");
+  params.set("reconnect", "true");
+  if (vncToken) params.set("token", vncToken);
+  return `${vncUrl}/vnc.html?${params.toString()}`;
+}
+
 async function waitForVncReady(vncPageUrl: string, maxAttempts = 15): Promise<boolean> {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
@@ -76,10 +86,15 @@ export function RecordPage() {
     [baseUrl, moduleName],
   );
 
-  const copyCommand = async () => {
-    await navigator.clipboard.writeText(codegenCommand);
+  const copyText = async (text: string, label: string) => {
+    await navigator.clipboard.writeText(text);
     setCopied(true);
+    setMessage(`已复制 ${label}，请在 VNC 浏览器内点击输入框后 Cmd+V / Ctrl+V 粘贴`);
     window.setTimeout(() => setCopied(false), 2000);
+  };
+
+  const copyCommand = async () => {
+    await copyText(codegenCommand, "codegen 命令");
   };
 
   const onSubmit = async (e: FormEvent) => {
@@ -121,8 +136,7 @@ export function RecordPage() {
       });
       setSessionId(data.sessionId);
 
-      const tokenQs = data.vncToken ? `?token=${encodeURIComponent(data.vncToken)}` : "";
-      const vncPageUrl = `${data.vncUrl}/vnc.html${tokenQs}`;
+      const vncPageUrl = buildVncEmbedUrl(data.vncUrl, data.vncToken);
       setMessage("Web 录制已启动，正在连接浏览器…");
 
       await new Promise((r) => window.setTimeout(r, 2000));
@@ -168,7 +182,9 @@ export function RecordPage() {
       : "px-3 py-1.5 text-sm rounded-t bg-slate-800/60 text-slate-400 border border-transparent hover:text-slate-200";
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div
+      className={`space-y-6 ${tab === "web" && vncSrc ? "max-w-6xl" : "max-w-4xl"}`}
+    >
       <div>
         <h1 className="text-2xl font-semibold">录制</h1>
         <p className="text-slate-400 text-sm mt-1">本地上传 Playwright codegen 文件，或在 Web 内直接录制</p>
@@ -269,14 +285,42 @@ export function RecordPage() {
                   : "rounded-lg border border-slate-700 overflow-hidden bg-black flex flex-col"
               }
             >
-              <div className="flex items-center justify-end px-3 py-2 bg-slate-900 border-b border-slate-700 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setVncFullscreen((v) => !v)}
-                  className="px-3 py-1.5 text-sm rounded bg-slate-700 hover:bg-slate-600"
-                >
-                  {vncFullscreen ? "退出全屏 (Esc)" : "全屏"}
-                </button>
+              <div className="px-3 py-2 bg-slate-900 border-b border-slate-700 shrink-0 space-y-2">
+                <p className="text-xs text-amber-200/90">
+                  键盘提示：noVNC 内若打不出下划线 <code className="text-amber-100">_</code>，请先
+                  点击 VNC 画面聚焦，切到<strong className="font-normal text-amber-100">英文输入法</strong>
+                  （Mac：Shift+-），或下方复制后粘贴。
+                </p>
+                {baseUrl.includes("saucedemo.com") && (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void copyText("standard_user", "用户名")}
+                      className="px-2 py-1 text-xs rounded bg-slate-700 hover:bg-slate-600"
+                    >
+                      复制用户名 standard_user
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void copyText("secret_sauce", "密码")}
+                      className="px-2 py-1 text-xs rounded bg-slate-700 hover:bg-slate-600"
+                    >
+                      复制密码 secret_sauce
+                    </button>
+                  </div>
+                )}
+                <p className="text-xs text-slate-400">
+                  画面会自动缩放适配窗口；仍看不全时可点「全屏」，或在 noVNC 侧边栏确认 Scaling mode 为 Local scaling。
+                </p>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setVncFullscreen((v) => !v)}
+                    className="px-3 py-1.5 text-sm rounded bg-slate-700 hover:bg-slate-600"
+                  >
+                    {vncFullscreen ? "退出全屏 (Esc)" : "全屏"}
+                  </button>
+                </div>
               </div>
               <iframe
                 title="Web 录制浏览器"
@@ -284,7 +328,7 @@ export function RecordPage() {
                 className={
                   vncFullscreen
                     ? "flex-1 w-full min-h-0 border-0"
-                    : "w-full h-[520px] border-0"
+                    : "w-full min-h-[480px] h-[calc(100vh-15rem)] border-0"
                 }
                 allow="clipboard-read; clipboard-write"
               />

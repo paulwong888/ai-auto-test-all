@@ -26,6 +26,7 @@
 | demo-git-ci.sh | ✅ | Wave 3：SSH push + webhook CI + token scope，~2min |
 | demo-rbac.sh | ✅ | Wave 4：AUTH on，viewer 403 / editor 202 / audit |
 | demo-phase3.sh | ✅ | Wave 3：含 git-ci + recording 回归 |
+| demo-pi.sh | ⚠️ | Pi Wave：分步 resume 全绿；单次冷跑 ~30–45min（plan+code+fix+code-v2）；需 `DASHSCOPE_API_KEY` + `RUN_TIMEOUT_MS≥900000` |
 
 ---
 
@@ -37,13 +38,13 @@
 | 2 | Web 创建项目 | ✅ | demo `POST /api/projects` |
 | 3 | init-template | ✅ | demo 步骤 2 |
 | 4 | 上传 recorded.py | ✅ | demo 步骤 3 |
-| 5 | Pi 生成计划 + UI 展示 | ⚠️ | `SEED_TESTS=always` 跳过 Pi；需 API Key 单独验 |
-| 6 | 确认后 Pi 生成 POM 代码 | ⚠️ | 同上 seed 降级 |
+| 5 | Pi 生成计划 + UI 展示 | ✅ | Pi Wave：`plan/generate` job ~2min；plan 7790 字符；`planVersionId=b7396082…` |
+| 6 | 确认后 Pi 生成 POM 代码 | ✅ | Pi Wave：`code/generate` ~10min；5 spec 文件 |
 | 7 | headed slowmo 15 passed | ✅ | `MODE=debug` demo，容器内 Xvfb（非宿主机弹窗） |
 | 8 | UI 打开 HTML 报告 | ✅ | `GET .../runs/:id/report` 200；ReportPage 未目视 |
-| 9 | fix/analyze 结构化建议 | ⏭️ | 全绿 run 跳过；需故意失败 run + Pi Key |
+| 9 | fix/analyze 结构化建议 | ✅ | Pi Wave：break login → `fix/analyze` ~2.5min；analysis + 1 patch（`@@` hunk） |
 
-**MVP 小结：** 核心链路（上传→run→报告）✅；Pi/fix 项需 Wave 1 补测。
+**MVP 小结：** 核心链路 ✅；Pi plan/code/fix 经 Pi Wave 真验 ✅（`demo-saucedemo.sh` 仍默认 seed 降级）。
 
 ---
 
@@ -52,8 +53,8 @@
 | # | 验收项 | 结果 | 证据 / 备注 |
 |---|--------|------|-------------|
 | 1 | 编辑 plan 保存 v2，diff v1 vs v2 | ✅ | demo：v1 PUT → v2 PUT + `baseVersionId` → `GET plan/diff` 含 TC-016 |
-| 2 | 基于 v2 重新 code/generate | ⏭️ | 未测（需 Pi 或 seed + planVersionId） |
-| 3 | 失败 → analyze 返回 patches + Diff | ⚠️ | demo 用 psql seed `fix_suggestions`（非 Pi analyze）；patches 结构 OK |
+| 2 | 基于 v2 重新 code/generate | ✅ | Pi Wave：`PUT plan v2` → `code/generate(planVersionId=e2caa919…)` job 79567a4c completed ~2.6min |
+| 3 | 失败 → analyze 返回 patches + Diff | ✅ | Pi Wave：真实 `fix/analyze`（非 seed）；`fix/apply` + verify run 1 passed |
 | 4 | apply patch → verify 单用例通过 | ✅ | demo：`fix/apply` + `autoVerify` → verify run 1 passed |
 | 5 | 第 4 轮 fix → 422 FIX_ITERATION_LIMIT | ✅ | demo：insert iterations 2,3 → apply 422 `FIX_ITERATION_LIMIT` |
 | 6 | ci preset 15 用例 < 3min | ✅ | demo ~91s，15 passed |
@@ -62,14 +63,14 @@
 | 9 | 两次 run compare，TC 级对比 | ✅ | **Wave 1 修复路由**；demo：pass→fail `newFailures=[TC-001]`，fail→verify `fixed=[TC-001]` |
 | 10 | 概览最近 7 次通过率趋势 | ✅ | demo：`GET /stats/trend?days=7` ≥1 数据点；Overview UI 未目视 |
 
-**Phase 2 小结：** Wave 1 demo-phase2.sh 覆盖 8/10 条（#2 ⏭️，#3 降级为 seed）；compare 路由 ✅；fix apply/verify/limit ✅。
+**Phase 2 小结：** demo-phase2.sh + Pi Wave 覆盖 10/10 条；compare 路由 ✅；fix 链 Pi 真验 ✅。
 
 ### Phase 2 里程碑补充
 
 | 里程碑 | 结果 | 备注 |
 |--------|------|------|
 | P2-M1 plan 版本 | ✅ | demo v1→v2→diff |
-| P2-M2 fix apply | ✅ | seed + apply + autoVerify E2E；Pi analyze 仍 ⏭️ |
+| P2-M2 fix apply | ✅ | seed + Pi analyze + apply + autoVerify E2E |
 | P2-M3 preset / TC 选择 | ✅ | ci/debug + rerunFailedOnly demo |
 | P2-M4 compare / trend / History | ✅ | compare 路由已修；trend demo OK；History UI 未目视 |
 
@@ -117,9 +118,8 @@
 
 **剩余 / 降级：**
 
-- Phase 2 #2 code/generate from v2：⏭️ 需 Pi
-- Phase 2 #3 Pi fix/analyze：⚠️ demo 用 DB seed 替代
-- MVP #9 fix/analyze（Pi）：⏭️ demo-saucedemo 全绿仍跳过
+- Phase 2 #2 / #3 / MVP #9 Pi 项：✅ 见 Pi Wave（2026-09-21）
+- `demo-saucedemo.sh` 默认仍 seed 跳过 Pi（回归用）
 - Phase 3 / recorder / RBAC：未在本 Wave 范围
 
 ---
@@ -186,7 +186,39 @@
 1. ✅ **修复 `/runs/compare` 路由顺序** — 已完成
 2. ✅ **扩展 demo-phase2.sh** — 已完成
 3. ✅ **fix apply/verify E2E** — 已完成（seed patches）
-4. 🔧 MVP #9：故意失败 run + fix/analyze（或 mock）— 仍 ⏭️
+4. ✅ MVP #9 Pi fix/analyze — Pi Wave 已完成
+
+---
+
+## Pi Wave 结果（2026-09-21）
+
+| # | 项 | 结果 | 证据 |
+|---|-----|------|------|
+| 1 | `demo-pi.sh` + Key 预检 | ✅ | `docker/.env.local` `DASHSCOPE_API_KEY`；`RUN_TIMEOUT_MS=1800000` |
+| 2 | Pi plan/generate (MVP #5) | ✅ | project `cf0f4bbb…`；plan v1 `b7396082…` |
+| 3 | Pi code/generate (MVP #6) | ✅ | 5 specs；首次 code job ~10min |
+| 4 | break + Pi fix/analyze (MVP #9 / P2 #3) | ✅ | fix job `c13afe1e…`；patches[0] 含 unifiedDiff |
+| 5 | fix/apply + autoVerify | ✅ | verify run `83b92e43…`：1 passed |
+| 6 | plan v2 + code(planVersionId) (P2 #2) | ✅ | v2 `e2caa919…`；code job `79567a4c…` completed；diff 含 TC-016 |
+
+**降级 / 注意：**
+
+- Pi 全量 spec 29 条 CI 易 >10min；`demo-pi.sh` 默认 `PI_RUN_SPEC=specs/test_login.py`（6 条）验链路
+- code v2 首次在 15min 超时；提 `RUN_TIMEOUT_MS` 后重试成功
+- 单次 `./scripts/demo-pi.sh` 冷跑未在同一进程跑完（脚本 bug 已修）；可用 `PI_WAVE_RESUME_*` / `PI_WAVE_FROM_STEP=7` 分步
+
+**复现（Pi，约 30–45min 冷跑）：**
+
+```bash
+# docker/.env.local: DASHSCOPE_API_KEY, RUN_TIMEOUT_MS=1800000
+cd docker && docker-compose up -d server
+cd .. && ./scripts/demo-pi.sh
+
+# 或分步 resume（已有 plan/code 时）
+PI_WAVE_RESUME_PID=<PID> PI_WAVE_RESUME_WORKSPACE=<ws> PI_WAVE_RESUME_V1_ID=<v1> \
+  PI_WAVE_FROM_STEP=4 ./scripts/demo-pi.sh
+PI_WAVE_V2_ID=<v2> PI_WAVE_FROM_STEP=7 ./scripts/demo-pi.sh
+```
 
 ---
 
@@ -216,6 +248,9 @@ curl -s "http://localhost:3001/api/projects/<PID>/runs/compare?runA=<R1>&runB=<R
 
 # Wave 2 Web 录制 smoke
 ./scripts/demo-recording.sh
+
+# Pi Wave（真实 plan/code/fix，需 Key）
+./scripts/demo-pi.sh
 
 # 或手动
 curl -s -X POST "http://localhost:3001/api/projects/<PID>/record/start" \
