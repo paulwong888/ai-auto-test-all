@@ -286,7 +286,7 @@ export function RecordPage() {
                   </div>
                 )}
                 <p className="text-xs text-slate-400">
-                  画面会自动缩放适配窗口；仍看不全时可点「全屏」，或在 noVNC 侧边栏确认 Scaling mode 为 Local scaling。
+                  画面会自动缩放适配窗口。页面底部固定条（如购物车蓝条）在 Codegen 录制面板上方；仍被挡住时可点「全屏」、在浏览器内滚动，或确认 noVNC Scaling mode 为 Local scaling。
                 </p>
                 <div className="flex justify-end">
                   <button

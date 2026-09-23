@@ -4,6 +4,7 @@ import { createVncToken } from "./vnc-tokens.js";
 import type { RecorderService } from "../services/recorder-service.js";
 import { authDisabled, requireProjectRole } from "../middleware/auth.js";
 import { proxyVncHttp } from "./vnc-proxy.js";
+import { normalizeModuleName } from "../utils/module-name.js";
 
 function projectId(req: import("express").Request): string {
   return (req.params as { id: string }).id;
@@ -14,7 +15,7 @@ export function createRecordLiveRouter(recorder: RecorderService): Router {
 
   router.post("/record/start", requireProjectRole("owner", "editor"), async (req, res) => {
     try {
-      const moduleName = String(req.body?.moduleName ?? "saucedemo");
+      const moduleName = normalizeModuleName(String(req.body?.moduleName ?? "saucedemo"));
       const targetUrl = String(req.body?.targetUrl ?? req.body?.baseUrl ?? "");
       if (!targetUrl) {
         res.status(422).json({ ok: false, error: { code: "TARGET_URL_REQUIRED", message: "targetUrl required" } });

@@ -5,9 +5,7 @@
       "api": "openai-completions",
       "apiKey": "__LLM_API_KEY__",
       "authHeader": true,
-      "models": [
-        { "id": "__PI_MODEL__" }
-      ]
+      "models": __PI_MODELS_JSON__
     }
   }
 }

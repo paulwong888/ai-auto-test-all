@@ -1,4 +1,4 @@
-/** noVNC embed: scale 1280×720 remote desktop to fit iframe (default is 1:1 and clips bottom). */
+/** noVNC embed: scale remote desktop to fit iframe (recorder default 1280×960; default 1:1 clips bottom). */
 export function buildVncEmbedUrl(vncUrl: string, vncToken?: string): string {
   const params = new URLSearchParams();
   params.set("resize", "scale");

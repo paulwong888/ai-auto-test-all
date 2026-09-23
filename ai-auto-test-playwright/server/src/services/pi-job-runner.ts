@@ -133,7 +133,24 @@ export class PiJobRunner {
       await client.promptAndWait(definition.buildPrompt(ctx, baseUrl), this.config.pi.runTimeoutMs);
       if (handle.cancelled) return;
 
-      const result = await definition.validateOutput(ctx);
+      let result: Record<string, unknown>;
+      try {
+        result = await definition.validateOutput(ctx);
+      } catch (firstErr) {
+        const firstMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+        if (
+          definition.type === "plan" &&
+          firstMsg.includes("Plan file was not created") &&
+          !handle.cancelled
+        ) {
+          const retryPrompt = `上一次 write 未成功落盘。请 read tests/recorded/${ctx.moduleName}.py，然后**必须**用 write 工具将完整计划写入 tests/plans/${ctx.moduleName}-test-plan.md（禁止只在对话里输出）。`;
+          await client.promptAndWait(retryPrompt, this.config.pi.runTimeoutMs);
+          if (handle.cancelled) return;
+          result = await definition.validateOutput(ctx);
+        } else {
+          throw firstErr;
+        }
+      }
       handle.job.status = "completed";
       handle.job.result = { ...(handle.job.result ?? {}), ...result };
       handle.job.finishedAt = new Date().toISOString();
@@ -146,7 +163,11 @@ export class PiJobRunner {
       wsHub.broadcast(definition.readyWs(ctx, jobId, extra));
     } catch (err) {
       if (handle.cancelled) return;
-      const message = err instanceof Error ? err.message : String(err);
+      let message = err instanceof Error ? err.message : String(err);
+      const streamErr = client.getLastStreamError();
+      if (streamErr && !message.includes(streamErr)) {
+        message = `${message} (Pi: ${streamErr})`;
+      }
       handle.job.status = "failed";
       handle.job.error = message;
       handle.job.finishedAt = new Date().toISOString();

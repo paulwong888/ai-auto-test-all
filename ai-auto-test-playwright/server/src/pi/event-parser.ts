@@ -15,6 +15,7 @@ export interface ParsedAgentStreamState {
   lastAssistantText: string;
   settled: boolean;
   lastBashArgs: Record<string, unknown>;
+  lastStreamError: string | null;
 }
 
 export function createStreamState(): ParsedAgentStreamState {
@@ -24,6 +25,7 @@ export function createStreamState(): ParsedAgentStreamState {
     lastAssistantText: "",
     settled: false,
     lastBashArgs: {},
+    lastStreamError: null,
   };
 }
 
@@ -107,6 +109,14 @@ function deriveProgressFromAgentEvent(
       state.settled = true;
       events.push({ kind: "agent_settled" });
       break;
+    case "auto_retry_end": {
+      const retry = event as { success?: boolean; finalError?: string };
+      if (retry.success === false && retry.finalError) {
+        state.lastStreamError = retry.finalError;
+        events.push({ kind: "error", message: `[pi] ${retry.finalError}` });
+      }
+      break;
+    }
     default:
       break;
   }
