@@ -5,6 +5,7 @@ import type { PlanService } from "../services/plan-service.js";
 import type { ProjectService } from "../services/project-service.js";
 import type { FixService } from "../services/fix-service.js";
 import type { RunService } from "../services/run-service.js";
+import type { PytestCollectService } from "../services/pytest-collect-service.js";
 import type { WorkflowService } from "../services/workflow-service.js";
 import type { GitService } from "../services/git-service.js";
 import type { RecorderService } from "../services/recorder-service.js";
@@ -39,6 +40,7 @@ export function createProjectsRouter(
     planService: PlanService;
     codegenService: CodegenService;
     runService: RunService;
+    collectService: PytestCollectService;
     fixService: FixService;
     gitService: GitService;
     recorderService: RecorderService;
@@ -51,7 +53,10 @@ export function createProjectsRouter(
     router.use("/:id", createPlanRouter(deps.planService));
     router.use("/:id", createWorkflowRouter(deps));
     router.use("/:id", createStatsRouter());
-    router.use("/:id", createRunRouter(deps.runService, deps.auditService, config));
+    router.use(
+      "/:id",
+      createRunRouter(deps.runService, deps.auditService, config, deps.collectService),
+    );
     router.use("/:id", createFixRouter(deps.fixService));
     router.use("/:id", createGitRouter(deps.gitService, projectService, deps.auditService));
     router.use("/:id", createRecordLiveRouter(deps.recorderService));

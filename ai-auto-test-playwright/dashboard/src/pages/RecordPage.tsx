@@ -4,6 +4,7 @@ import { fetchJson, uploadFile } from "../api/client.js";
 import { useWorkflow } from "../hooks/useWorkflow.js";
 import type { Project } from "../types/project.js";
 import { buildVncEmbedUrl, waitForVncReady } from "../utils/vncEmbed.js";
+import { defaultModuleFromWorkspace } from "../utils/projectModule.js";
 
 type RecordTab = "upload" | "web";
 
@@ -30,8 +31,8 @@ export function RecordPage() {
   const { workflow } = useWorkflow(id);
   const [tab, setTab] = useState<RecordTab>("upload");
   const [file, setFile] = useState<File | null>(null);
-  const [moduleName, setModuleName] = useState("saucedemo");
-  const [baseUrl, setBaseUrl] = useState("https://www.saucedemo.com");
+  const [moduleName, setModuleName] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,13 +53,23 @@ export function RecordPage() {
   useEffect(() => {
     if (!id) return;
     void fetchJson<Project>(`/api/projects/${id}`)
-      .then((p) => setBaseUrl(p.baseUrl))
+      .then((p) => {
+        setBaseUrl(p.baseUrl);
+        setModuleName((prev) =>
+          prev.trim() ? prev : defaultModuleFromWorkspace(p.workspacePath),
+        );
+      })
       .catch(() => undefined);
   }, [id]);
 
+  useEffect(() => {
+    if (!workflow?.workspacePath || moduleName.trim()) return;
+    setModuleName(defaultModuleFromWorkspace(workflow.workspacePath));
+  }, [workflow?.workspacePath, moduleName]);
+
   const codegenCommand = useMemo(
     () =>
-      `npx playwright codegen ${baseUrl} --target python-pytest -o tests/recorded/${moduleName || "saucedemo"}.py`,
+      `npx playwright codegen ${baseUrl} --target python-pytest -o tests/recorded/${moduleName || "your-module"}.py`,
     [baseUrl, moduleName],
   );
 

@@ -128,6 +128,15 @@ export function createWorkflowRouter(deps: {
     }
   });
 
+  router.get("/recorded-modules", requireProjectMember(), async (req, res) => {
+    try {
+      const modules = await deps.workflowService.listRecordedModules(projectId(req));
+      res.json({ ok: true, data: { modules } });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
   return router;
 }
 

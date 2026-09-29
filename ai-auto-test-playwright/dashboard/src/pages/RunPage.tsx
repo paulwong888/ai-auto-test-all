@@ -24,8 +24,13 @@ export function RunPage() {
   const [headed, setHeaded] = useState(true);
   const [slowmo, setSlowmo] = useState(600);
   const [vncPreview, setVncPreview] = useState(false);
-  const [tcList, setTcList] = useState<string[]>([]);
-  const [selectedTc, setSelectedTc] = useState<string>("");
+  interface CollectItem {
+    nodeId: string;
+    name: string;
+    tc: string | null;
+  }
+  const [collectItems, setCollectItems] = useState<CollectItem[]>([]);
+  const [selectedNodeId, setSelectedNodeId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [vncSrc, setVncSrc] = useState<string | null>(null);
@@ -61,12 +66,9 @@ export function RunPage() {
 
   useEffect(() => {
     if (!id) return;
-    void fetchJson<{ content: string }>(`/api/projects/${id}/plan`)
-      .then((plan) => {
-        const ids = [...plan.content.matchAll(/TC-(\d+)/gi)].map((m) => `TC-${m[1]!.padStart(3, "0")}`);
-        setTcList([...new Set(ids)].sort());
-      })
-      .catch(() => setTcList([]));
+    void fetchJson<{ items: CollectItem[]; total: number }>(`/api/projects/${id}/tests/collect`)
+      .then((data) => setCollectItems(data.items ?? []))
+      .catch(() => setCollectItems([]));
   }, [id]);
 
   useEffect(() => {
@@ -104,6 +106,11 @@ export function RunPage() {
     }
   };
 
+  const runSelection = () => {
+    if (!selectedNodeId) return {};
+    return { nodeIds: [selectedNodeId] };
+  };
+
   const runWithPreset = () => {
     if (preset === "custom") {
       void startRun({
@@ -111,11 +118,11 @@ export function RunPage() {
         headed,
         slowmo: slowmo || undefined,
         vncPreview: headed && vncPreview,
-        specFilter: selectedTc || null,
+        ...runSelection(),
       });
       return;
     }
-    void startRun({ preset, specFilter: selectedTc || null });
+    void startRun({ preset, ...runSelection() });
   };
 
   const lastFailed = runs.find((r) => r.failed > 0 || r.status === "failed");
@@ -124,7 +131,7 @@ export function RunPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">执行测试</h1>
-        <p className="text-slate-400 text-sm mt-1">Run preset、单 TC 或仅重跑失败</p>
+        <p className="text-slate-400 text-sm mt-1">Run preset、单条 pytest 用例或仅重跑失败</p>
       </div>
 
       <div className="rounded-lg border border-slate-700 p-4 space-y-4">
@@ -175,22 +182,26 @@ export function RunPage() {
           </div>
         )}
 
-        {tcList.length > 0 && (
-          <label className="flex items-center gap-2 text-sm">
-            单 TC
-            <select
-              value={selectedTc}
-              onChange={(e) => setSelectedTc(e.target.value)}
-              className="rounded bg-slate-800 border border-slate-600 px-2 py-1"
-            >
-              <option value="">全部</option>
-              {tcList.map((tc) => (
-                <option key={tc} value={`specs/`}>
-                  {tc}（需 nodeId 映射）
-                </option>
-              ))}
-            </select>
-          </label>
+        {collectItems.length > 0 && (
+          <div className="space-y-1 text-sm">
+            <label className="flex items-center gap-2">
+              可执行用例 ({collectItems.length})
+              <select
+                value={selectedNodeId}
+                onChange={(e) => setSelectedNodeId(e.target.value)}
+                className="rounded bg-slate-800 border border-slate-600 px-2 py-1 max-w-xl"
+              >
+                <option value="">全部 specs/</option>
+                {collectItems.map((item) => (
+                  <option key={item.nodeId} value={item.nodeId}>
+                    {item.tc ? `${item.tc} — ` : ""}
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="text-xs text-slate-500">计划文档中的 TC 编号仅供对照，以下拉 collect 结果为准。</p>
+          </div>
         )}
 
         <div className="flex flex-wrap gap-2">

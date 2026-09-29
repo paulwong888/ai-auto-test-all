@@ -22,6 +22,7 @@ import { ProjectService } from "./services/project-service.js";
 import { ProjectTemplateService } from "./services/project-template-service.js";
 import { FixService } from "./services/fix-service.js";
 import { RunService } from "./services/run-service.js";
+import { PytestCollectService } from "./services/pytest-collect-service.js";
 import { WorkflowService } from "./services/workflow-service.js";
 import { GitService } from "./services/git-service.js";
 import { RecorderService } from "./services/recorder-service.js";
@@ -37,6 +38,7 @@ const piJobRunner = new PiJobRunner(config);
 const planService = new PlanService(config, projectService, piJobRunner);
 const codegenService = new CodegenService(config, projectService, piJobRunner);
 const runService = new RunService(config, projectService);
+const collectService = new PytestCollectService(config, projectService);
 const fixService = new FixService(config, projectService, piJobRunner);
 fixService.setRunService(runService);
 const gitService = new GitService(templateService);
@@ -57,6 +59,7 @@ app.use("/api/projects", requireAuth, createProjectsRouter(projectService, {
   planService,
   codegenService,
   runService,
+  collectService,
   fixService,
   gitService,
   recorderService,

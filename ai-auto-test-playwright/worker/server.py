@@ -20,6 +20,7 @@ PASSED_RE = re.compile(r"(\d+)\s+passed", re.IGNORECASE)
 FAILED_RE = re.compile(r"(\d+)\s+failed", re.IGNORECASE)
 SKIPPED_RE = re.compile(r"(\d+)\s+skipped", re.IGNORECASE)
 DURATION_RE = re.compile(r"in\s+([\d.]+)s", re.IGNORECASE)
+COLLECT_LINE_RE = re.compile(r"^(specs/\S+::\S+(?:::\S+)?)")
 
 _active_processes: dict[str, subprocess.Popen[str]] = {}
 _lock = threading.Lock()
@@ -55,6 +56,52 @@ def parse_pytest_summary(text: str) -> dict[str, int]:
                 "durationMs": duration_ms,
             }
     return {"passed": passed, "failed": failed, "skipped": skipped, "durationMs": duration_ms}
+
+
+def extract_tc_from_node(node_id: str) -> str | None:
+    m = re.search(r"test_tc(\d+)", node_id, re.I) or re.search(r"TC-(\d+)", node_id, re.I)
+    if not m:
+        return None
+    return f"TC-{m.group(1).zfill(3)}"
+
+
+def parse_collect_output(text: str) -> list[dict[str, str | None]]:
+    items: list[dict[str, str | None]] = []
+    seen: set[str] = set()
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line.startswith("specs/"):
+            continue
+        match = COLLECT_LINE_RE.match(line)
+        if not match:
+            continue
+        node_id = match.group(1)
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        tc = extract_tc_from_node(node_id)
+        name = tc or node_id.rsplit("::", 1)[-1]
+        items.append({"nodeId": node_id, "name": name, "tc": tc})
+    return items
+
+
+def run_collect(command: str) -> dict[str, Any]:
+    wrapped = f"sh -c {json.dumps(command)}"
+    proc = subprocess.run(
+        wrapped,
+        shell=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    output = (proc.stdout or "") + (proc.stderr or "")
+    items = parse_collect_output(output)
+    return {
+        "ok": len(items) > 0,
+        "exitCode": proc.returncode,
+        "items": items,
+        "output": output[-4000:] if len(output) > 4000 else output,
+    }
 
 
 def emit(writer: Any, payload: dict[str, Any]) -> None:
@@ -217,6 +264,17 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 return
             cancelled = cancel_run(run_id)
             self._send_json(200, {"ok": True, "cancelled": cancelled})
+            return
+
+        if self.path == "/internal/collect":
+            payload = self._read_json()
+            command = str(payload.get("command", "")).strip()
+            if not command:
+                self._send_json(400, {"ok": False, "error": "command is required"})
+                return
+            result = run_collect(command)
+            status = 200 if result["ok"] else 502
+            self._send_json(status, result)
             return
 
         self._send_json(404, {"ok": False, "error": "not_found"})

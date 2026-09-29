@@ -15,7 +15,15 @@ export function createRecordLiveRouter(recorder: RecorderService): Router {
 
   router.post("/record/start", requireProjectRole("owner", "editor"), async (req, res) => {
     try {
-      const moduleName = normalizeModuleName(String(req.body?.moduleName ?? "saucedemo"));
+      const moduleNameRaw = String(req.body?.moduleName ?? "").trim();
+      if (!moduleNameRaw) {
+        res.status(422).json({
+          ok: false,
+          error: { code: "MODULE_REQUIRED", message: "moduleName is required" },
+        });
+        return;
+      }
+      const moduleName = normalizeModuleName(moduleNameRaw);
       const targetUrl = String(req.body?.targetUrl ?? req.body?.baseUrl ?? "");
       if (!targetUrl) {
         res.status(422).json({ ok: false, error: { code: "TARGET_URL_REQUIRED", message: "targetUrl required" } });

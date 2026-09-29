@@ -87,6 +87,22 @@ export class WorkflowService {
     };
   }
 
+  async listRecordedModules(projectId: string): Promise<string[]> {
+    const project = await this.requireProject(projectId);
+    const dir = path.join(project.workspacePath, "tests", "recorded");
+    let entries: string[];
+    try {
+      entries = await fs.readdir(dir);
+    } catch {
+      return [];
+    }
+    const names = entries
+      .filter((f) => f.endsWith(".py") && f !== ".gitkeep")
+      .map((f) => f.slice(0, -3))
+      .filter((name) => /^[a-z][a-z0-9_-]*$/i.test(name));
+    return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+  }
+
   private async requireProject(projectId: string) {
     const project = await this.projectService.getById(projectId);
     if (!project) {

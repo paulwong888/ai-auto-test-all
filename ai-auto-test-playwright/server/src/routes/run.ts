@@ -4,6 +4,7 @@ import { isAppError } from "../errors.js";
 import { assertApiTokenProject, requireProjectRole } from "../middleware/auth.js";
 import type { AuthedRequest } from "../middleware/auth.js";
 import type { RunService } from "../services/run-service.js";
+import type { PytestCollectService } from "../services/pytest-collect-service.js";
 import type { AuditService } from "../services/audit-service.js";
 import { paramString, projectIdFromRequest } from "../utils/route-params.js";
 import { proxyRunVncHttp } from "./run-vnc-proxy.js";
@@ -14,8 +15,22 @@ export function createRunRouter(
   runService: RunService,
   auditService: AuditService,
   config: AppConfig,
+  collectService: PytestCollectService,
 ): Router {
   const router = Router({ mergeParams: true });
+
+  router.get(
+    "/tests/collect",
+    requireProjectRole("owner", "editor", "viewer", "ci_bot"),
+    async (req, res) => {
+      try {
+        const data = await collectService.collectForProject(projectId(req));
+        res.json({ ok: true, data });
+      } catch (err) {
+        sendError(res, err);
+      }
+    },
+  );
 
   router.post("/run", requireProjectRole("owner", "editor", "ci_bot"), async (req: AuthedRequest, res) => {
     try {

@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useParams } from "react-router-dom";
 import { fetchJson } from "../api/client.js";
 import { useJobPoll } from "../hooks/useJobPoll.js";
+import { useWorkflow } from "../hooks/useWorkflow.js";
+import { defaultModuleFromWorkspace } from "../utils/projectModule.js";
 
 interface PlanVersion {
   id: string;
@@ -17,6 +19,7 @@ interface PlanVersion {
 export function PlanPage() {
   const { id } = useParams<{ id: string }>();
   const { pollJob } = useJobPoll();
+  const { workflow } = useWorkflow(id);
   const [markdown, setMarkdown] = useState<string>("");
   const [editContent, setEditContent] = useState<string>("");
   const [moduleName, setModuleName] = useState<string>("");
@@ -28,42 +31,88 @@ export function PlanPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [diffText, setDiffText] = useState<string | null>(null);
   const [diffPick, setDiffPick] = useState<string[]>([]);
+  const [recordedModules, setRecordedModules] = useState<string[]>([]);
+  /** 避免 workflow 5s 轮询反复把模块切回默认项 */
+  const didInitialModuleLoad = useRef(false);
+  /** 忽略过期的 loadPlan/loadVersions 响应（初始加载与用户切换并发时） */
+  const planLoadSeq = useRef(0);
 
-  const loadVersions = useCallback(async () => {
-    if (!id) return;
-    try {
-      const data = await fetchJson<{ versions: PlanVersion[] }>(
-        `/api/projects/${id}/plan/versions`,
-      );
-      setVersions(data.versions ?? []);
-    } catch {
-      setVersions([]);
-    }
-  }, [id]);
+  const loadVersions = useCallback(
+    async (mod: string, seq: number) => {
+      if (!id || !mod) return;
+      try {
+        const qs = new URLSearchParams({ moduleName: mod });
+        const data = await fetchJson<{ versions: PlanVersion[] }>(
+          `/api/projects/${id}/plan/versions?${qs.toString()}`,
+        );
+        if (planLoadSeq.current !== seq) return;
+        setVersions(data.versions ?? []);
+      } catch {
+        if (planLoadSeq.current !== seq) return;
+        setVersions([]);
+      }
+    },
+    [id],
+  );
 
-  const loadPlan = useCallback(async () => {
-    if (!id) return;
-    try {
-      const data = await fetchJson<{
-        content: string;
-        moduleName: string;
-        planVersionId: string | null;
-      }>(`/api/projects/${id}/plan`);
-      setMarkdown(data.content ?? "");
-      setEditContent(data.content ?? "");
-      setModuleName(data.moduleName ?? "");
-      setPlanVersionId(data.planVersionId);
-    } catch {
-      setMarkdown("");
-      setEditContent("");
-    }
+  const loadPlan = useCallback(
+    async (mod: string, seq: number) => {
+      if (!id || !mod) return;
+      try {
+        const qs = new URLSearchParams({ moduleName: mod });
+        const data = await fetchJson<{
+          content: string;
+          moduleName: string;
+          planVersionId: string | null;
+        }>(`/api/projects/${id}/plan?${qs.toString()}`);
+        if (planLoadSeq.current !== seq) return;
+        setMarkdown(data.content ?? "");
+        setEditContent(data.content ?? "");
+        setModuleName(data.moduleName ?? mod);
+        setPlanVersionId(data.planVersionId);
+      } catch {
+        if (planLoadSeq.current !== seq) return;
+        setMarkdown("");
+        setEditContent("");
+        setPlanVersionId(null);
+        setModuleName(mod);
+      }
+    },
+    [id],
+  );
+
+  useEffect(() => {
+    didInitialModuleLoad.current = false;
   }, [id]);
 
   useEffect(() => {
     if (!id) return;
-    void loadPlan();
-    void loadVersions();
-  }, [id, loadPlan, loadVersions]);
+    void fetchJson<{ modules: string[] }>(`/api/projects/${id}/recorded-modules`)
+      .then((d) => setRecordedModules(d.modules ?? []))
+      .catch(() => setRecordedModules([]));
+  }, [id]);
+
+  const switchModule = useCallback(
+    async (mod: string) => {
+      const trimmed = mod.trim();
+      if (!trimmed) return;
+      const seq = ++planLoadSeq.current;
+      setModuleName(trimmed);
+      setEditing(false);
+      setDiffPick([]);
+      await Promise.all([loadPlan(trimmed, seq), loadVersions(trimmed, seq)]);
+    },
+    [loadPlan, loadVersions],
+  );
+
+  useEffect(() => {
+    if (!id || !workflow || didInitialModuleLoad.current) return;
+    didInitialModuleLoad.current = true;
+    const fallback = defaultModuleFromWorkspace(workflow.workspacePath);
+    const browseDefault =
+      workflow.moduleName === "saucedemo" ? fallback : workflow.moduleName?.trim() || fallback;
+    void switchModule(browseDefault);
+  }, [id, workflow, switchModule]);
 
   const generatePlan = async () => {
     if (!id) return;
@@ -71,13 +120,16 @@ export function PlanPage() {
     setError(null);
     setMessage(null);
     try {
+      const mod = moduleName.trim();
+      if (!mod) throw new Error("请先选择或填写计划模块名");
       const { jobId } = await fetchJson<{ jobId: string }>(`/api/projects/${id}/plan/generate`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ moduleName: mod }),
       });
       const job = await pollJob(jobId);
       if (job.status === "failed") throw new Error(job.error ?? "计划生成失败");
-      await loadPlan();
-      await loadVersions();
+      await switchModule(mod);
       setMessage("测试计划已生成");
     } catch (err) {
       setError(err instanceof Error ? err.message : "生成失败");
@@ -104,7 +156,7 @@ export function PlanPage() {
       setPlanVersionId(saved.id);
       setMarkdown(editContent);
       setEditing(false);
-      await loadVersions();
+      await switchModule(moduleName || "sales-portal");
       setMessage(`已保存 v${saved.versionNumber}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败");
@@ -192,6 +244,39 @@ export function PlanPage() {
               </span>
             )}
           </p>
+          <label className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-slate-400">计划模块</span>
+            <select
+              value={moduleName}
+              onChange={(e) => void switchModule(e.target.value)}
+              disabled={busy || editing}
+              className="rounded bg-slate-800 border border-slate-600 px-2 py-1 min-w-[14rem]"
+            >
+              {recordedModules.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+              {moduleName && !recordedModules.includes(moduleName) && (
+                <option value={moduleName}>{moduleName}</option>
+              )}
+            </select>
+            <input
+              type="text"
+              value={moduleName}
+              onChange={(e) => setModuleName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (moduleName.trim()) void switchModule(moduleName.trim());
+                }
+              }}
+              disabled={busy || editing}
+              placeholder="新模块名，Enter 加载"
+              className="rounded bg-slate-800 border border-slate-600 px-2 py-1 text-xs font-mono min-w-[10rem]"
+            />
+            <span className="text-xs text-slate-500">tests/plans/{moduleName || "…"}-test-plan.md</span>
+          </label>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
