@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@temporalio/client": "^1.11.7",
     "bullmq": "^5.34.0",
     "cors": "^2.8.5",
     "diff": "^8.0.3",
@@ -18,6 +19,7 @@
     "ioredis": "^5.4.2",
     "multer": "^2.4.0",
     "pg": "^8.23.0",
+    "undici": "^7.16.0",
     "ws": "^8.21.3",
     "zod": "^3.25.67"
   },

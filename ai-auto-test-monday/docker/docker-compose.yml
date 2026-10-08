@@ -27,6 +27,8 @@ services:
       POSTGRES_USER: temporal
       POSTGRES_PWD: temporal
       POSTGRES_SEEDS: temporal-postgresql
+    ports:
+      - "0.0.0.0:${TEMPORAL_GRPC_PORT:-7233}:7233"
     networks:
       - monday-net
 

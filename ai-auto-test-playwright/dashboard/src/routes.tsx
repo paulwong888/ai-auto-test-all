@@ -5,7 +5,9 @@ import { CodePage } from "./pages/CodePage.js";
 import { FixReviewPage } from "./pages/FixReviewPage.js";
 import { HistoryPage } from "./pages/HistoryPage.js";
 import { LoginPage } from "./pages/LoginPage.js";
+import { GlobalLlmSettingsPage } from "./pages/GlobalLlmSettingsPage.js";
 import { MembersPage } from "./pages/MembersPage.js";
+import { ProjectLlmSettingsPage } from "./pages/ProjectLlmSettingsPage.js";
 import { PlanPage } from "./pages/PlanPage.js";
 import { ProjectOverviewPage } from "./pages/ProjectOverviewPage.js";
 import { ProjectsPage } from "./pages/ProjectsPage.js";
@@ -26,9 +28,11 @@ export const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <Navigate to="/projects" replace /> },
+      { path: "settings/llm", element: <GlobalLlmSettingsPage /> },
       { path: "projects", element: <ProjectsPage /> },
       { path: "projects/:id", element: <ProjectOverviewPage /> },
       { path: "projects/:id/settings/members", element: <MembersPage /> },
+      { path: "projects/:id/settings/llm", element: <ProjectLlmSettingsPage /> },
       { path: "projects/:id/record", element: <RecordPage /> },
       { path: "projects/:id/plan", element: <PlanPage /> },
       { path: "projects/:id/code", element: <CodePage /> },

@@ -4,9 +4,34 @@ import { fetchJson } from "../api/client.js";
 import { LiveTerminal } from "../components/LiveTerminal.js";
 import { useRunWebSocket } from "../hooks/useRunWebSocket.js";
 import type { RunRecord } from "../types/project.js";
+import { formatCollectOptionLabel } from "../utils/collectLabel.js";
 import { buildVncEmbedUrl, waitForVncReady } from "../utils/vncEmbed.js";
 
 type PresetMode = "debug" | "ci" | "custom";
+
+function runSelectionStorageKey(projectId: string): string {
+  return `runPage:selectedNodeId:${projectId}`;
+}
+
+function loadSavedNodeId(projectId: string | undefined): string {
+  if (!projectId) return "";
+  try {
+    return localStorage.getItem(runSelectionStorageKey(projectId)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function saveSelectedNodeId(projectId: string | undefined, nodeId: string): void {
+  if (!projectId) return;
+  try {
+    const key = runSelectionStorageKey(projectId);
+    if (nodeId) localStorage.setItem(key, nodeId);
+    else localStorage.removeItem(key);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
 
 interface RunStartResponse {
   runId: string;
@@ -16,9 +41,36 @@ interface RunStartResponse {
   vncToken?: string;
 }
 
+interface PipelineRunRecord {
+  id: string;
+  status: string;
+  currentStage: string;
+  temporalWorkflowId: string;
+  runId?: string | null;
+  fixIteration?: number;
+  error?: string | null;
+  temporalProgress?: {
+    stage: string;
+    status: string;
+    runId?: string | null;
+  } | null;
+}
+
 export function RunPage() {
   const { id } = useParams<{ id: string }>();
-  const { logs, running, result, resetLive, vncUrl, vncToken } = useRunWebSocket();
+  const {
+    logs,
+    running,
+    result,
+    resetLive,
+    vncUrl,
+    vncToken,
+    pulseAt,
+    runStartedAt,
+    runId: liveRunId,
+    adoptActiveRun,
+    syncFinishedRun,
+  } = useRunWebSocket();
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [preset, setPreset] = useState<PresetMode>("debug");
   const [headed, setHeaded] = useState(true);
@@ -30,16 +82,25 @@ export function RunPage() {
     tc: string | null;
   }
   const [collectItems, setCollectItems] = useState<CollectItem[]>([]);
-  const [selectedNodeId, setSelectedNodeId] = useState<string>("");
+  const [selectedNodeId, setSelectedNodeId] = useState<string>(() => loadSavedNodeId(id));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [vncSrc, setVncSrc] = useState<string | null>(null);
   const [vncLoadError, setVncLoadError] = useState<string | null>(null);
+  const [vncFullscreen, setVncFullscreen] = useState(false);
+  const [pipelineRuns, setPipelineRuns] = useState<PipelineRunRecord[]>([]);
+  const [pipelineBusy, setPipelineBusy] = useState(false);
 
   const loadRuns = useCallback(async () => {
     if (!id) return;
     const data = await fetchJson<{ runs: RunRecord[] }>(`/api/projects/${id}/runs`);
     setRuns(data.runs);
+  }, [id]);
+
+  const loadPipelineRuns = useCallback(async () => {
+    if (!id) return;
+    const data = await fetchJson<{ runs: PipelineRunRecord[] }>(`/api/projects/${id}/pipeline/runs`);
+    setPipelineRuns(data.runs ?? []);
   }, [id]);
 
   const openVncPreview = useCallback(async (url: string | null | undefined, token?: string | null) => {
@@ -60,29 +121,67 @@ export function RunPage() {
 
   useEffect(() => {
     void loadRuns().catch(() => undefined);
-    const t = window.setInterval(() => void loadRuns(), 5000);
+    void loadPipelineRuns().catch(() => undefined);
+    const t = window.setInterval(() => {
+      void loadRuns();
+      void loadPipelineRuns();
+    }, 5000);
     return () => window.clearInterval(t);
-  }, [loadRuns]);
+  }, [loadRuns, loadPipelineRuns]);
+
+  const activeDbRun = runs.find((r) => r.status === "running");
+  const liveRunning = running || !!activeDbRun;
+
+  useEffect(() => {
+    if (!activeDbRun || running) return;
+    adoptActiveRun(activeDbRun.id, activeDbRun.startedAt ?? undefined);
+  }, [activeDbRun, running, adoptActiveRun]);
+
+  useEffect(() => {
+    if (!liveRunId || !running) return;
+    const dbRun = runs.find((r) => r.id === liveRunId);
+    if (dbRun) syncFinishedRun(dbRun);
+  }, [runs, liveRunId, running, syncFinishedRun]);
 
   useEffect(() => {
     if (!id) return;
+    setSelectedNodeId(loadSavedNodeId(id));
+    setCollectItems([]);
     void fetchJson<{ items: CollectItem[]; total: number }>(`/api/projects/${id}/tests/collect`)
       .then((data) => setCollectItems(data.items ?? []))
       .catch(() => setCollectItems([]));
   }, [id]);
 
   useEffect(() => {
-    if (running && vncUrl) {
+    if (!id || collectItems.length === 0 || !selectedNodeId) return;
+    if (!collectItems.some((item) => item.nodeId === selectedNodeId)) {
+      setSelectedNodeId("");
+      saveSelectedNodeId(id, "");
+    }
+  }, [id, collectItems, selectedNodeId]);
+
+  useEffect(() => {
+    if (liveRunning && vncUrl) {
       void openVncPreview(vncUrl, vncToken);
     }
-  }, [running, vncUrl, vncToken, openVncPreview]);
+  }, [liveRunning, vncUrl, vncToken, openVncPreview]);
 
   useEffect(() => {
     if (result) {
       setVncSrc(null);
       setVncLoadError(null);
+      setVncFullscreen(false);
     }
   }, [result]);
+
+  useEffect(() => {
+    if (!vncFullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setVncFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [vncFullscreen]);
 
   const startRun = async (body: Record<string, unknown>) => {
     if (!id) return;
@@ -109,6 +208,30 @@ export function RunPage() {
   const runSelection = () => {
     if (!selectedNodeId) return {};
     return { nodeIds: [selectedNodeId] };
+  };
+
+  const startPipeline = async (fullPipeline: boolean) => {
+    if (!id) return;
+    setPipelineBusy(true);
+    setError(null);
+    try {
+      await fetchJson(`/api/projects/${id}/pipeline/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runPreset: preset === "debug" ? "debug" : "ci",
+          nodeIds: selectedNodeId ? [selectedNodeId] : undefined,
+          skipPlan: !fullPipeline,
+          skipCodegen: !fullPipeline,
+          autoFix: true,
+        }),
+      });
+      await loadPipelineRuns();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Pipeline 启动失败");
+    } finally {
+      setPipelineBusy(false);
+    }
   };
 
   const runWithPreset = () => {
@@ -188,14 +311,17 @@ export function RunPage() {
               可执行用例 ({collectItems.length})
               <select
                 value={selectedNodeId}
-                onChange={(e) => setSelectedNodeId(e.target.value)}
+                onChange={(e) => {
+                  const nodeId = e.target.value;
+                  setSelectedNodeId(nodeId);
+                  saveSelectedNodeId(id, nodeId);
+                }}
                 className="rounded bg-slate-800 border border-slate-600 px-2 py-1 max-w-xl"
               >
                 <option value="">全部 specs/</option>
                 {collectItems.map((item) => (
                   <option key={item.nodeId} value={item.nodeId}>
-                    {item.tc ? `${item.tc} — ` : ""}
-                    {item.name}
+                    {formatCollectOptionLabel(item)}
                   </option>
                 ))}
               </select>
@@ -208,10 +334,10 @@ export function RunPage() {
           <button
             type="button"
             onClick={() => void runWithPreset()}
-            disabled={busy || running}
+            disabled={busy || liveRunning}
             className="px-4 py-2 rounded bg-emerald-600 text-sm disabled:opacity-50"
           >
-            {busy || running ? "运行中…" : "开始运行"}
+            {busy || liveRunning ? "运行中…" : "开始运行"}
           </button>
           {lastFailed && (
             <button
@@ -223,13 +349,73 @@ export function RunPage() {
                   previousRunId: lastFailed.id,
                 })
               }
-              disabled={busy || running}
+              disabled={busy || liveRunning}
               className="px-4 py-2 rounded bg-amber-600 text-sm disabled:opacity-50"
             >
               仅重跑失败
             </button>
           )}
         </div>
+      </div>
+
+      <div className="rounded-lg border border-slate-700 p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="font-medium">Temporal 全流程 Pipeline</h2>
+            <p className="text-xs text-slate-400 mt-1">
+              经 Temporal 编排 Run / Fix 重试；完整流程含 Plan → Codegen。Temporal UI：
+              <a
+                href="http://172.26.9.212:8088"
+                target="_blank"
+                rel="noreferrer"
+                className="text-emerald-400 ml-1"
+              >
+                :8088
+              </a>
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void startPipeline(false)}
+              disabled={pipelineBusy}
+              className="px-4 py-2 rounded bg-indigo-600 text-sm disabled:opacity-50"
+            >
+              {pipelineBusy ? "提交中…" : "Pipeline 运行（仅 Run+Fix）"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void startPipeline(true)}
+              disabled={pipelineBusy}
+              className="px-4 py-2 rounded bg-indigo-800 text-sm disabled:opacity-50"
+            >
+              完整 Pipeline
+            </button>
+          </div>
+        </div>
+        {pipelineRuns.length > 0 && (
+          <ul className="space-y-2 text-sm">
+            {pipelineRuns.slice(0, 5).map((p) => (
+              <li key={p.id} className="rounded border border-slate-800 px-3 py-2 flex justify-between gap-2">
+                <div>
+                  <span className="font-mono text-xs text-slate-500">{p.id.slice(0, 8)}</span>
+                  <span className="ml-2">{p.status}</span>
+                  <span className="ml-2 text-slate-400">{p.currentStage}</span>
+                  {p.fixIteration ? (
+                    <span className="ml-2 text-slate-500">fix#{p.fixIteration}</span>
+                  ) : null}
+                  {p.error && <span className="ml-2 text-red-400 truncate">{p.error}</span>}
+                </div>
+                <span
+                  className="text-xs text-slate-500 font-mono truncate max-w-[12rem]"
+                  title={p.temporalWorkflowId}
+                >
+                  {p.temporalWorkflowId}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {error && <p className="text-red-400 text-sm">{error}</p>}
@@ -241,15 +427,52 @@ export function RunPage() {
       )}
 
       {vncSrc && (
-        <div className="rounded-lg border border-slate-700 overflow-hidden">
-          <p className="text-xs text-slate-400 px-3 py-2 border-b border-slate-700">
-            浏览器在 Worker 虚拟桌面中执行；此处为 noVNC 实时预览（只读观看）。
-          </p>
-          <iframe title="Run browser preview" src={vncSrc} className="w-full h-[min(480px,calc(100vh-18rem))] bg-black" />
+        <div
+          className={
+            vncFullscreen
+              ? "fixed inset-0 z-50 flex flex-col bg-slate-950"
+              : "rounded-lg border border-slate-700 overflow-hidden"
+          }
+        >
+          <div
+            className={
+              vncFullscreen
+                ? "flex items-start justify-between gap-3 px-4 py-3 border-b border-slate-700"
+                : "px-3 py-2 border-b border-slate-700 space-y-2"
+            }
+          >
+            <p className="text-xs text-slate-400">
+              浏览器窗口与 Worker 虚拟桌面同为 1280×900 贴边显示；预览区按同比例缩放，减少底部黑边。购物车金额条在页面最下方。
+            </p>
+            <button
+              type="button"
+              onClick={() => setVncFullscreen((v) => !v)}
+              className="shrink-0 px-3 py-1.5 text-sm rounded bg-slate-700 hover:bg-slate-600"
+            >
+              {vncFullscreen ? "退出全屏 (Esc)" : "全屏"}
+            </button>
+          </div>
+          <div
+            className={
+              vncFullscreen
+                ? "flex-1 min-h-0 w-full flex items-center justify-center bg-black"
+                : "w-full flex items-center justify-center bg-black"
+            }
+          >
+            <iframe
+              title="Run browser preview"
+              src={vncSrc}
+              className={
+                vncFullscreen
+                  ? "w-full max-h-full aspect-[1280/900] border-0"
+                  : "w-full max-h-[calc(100vh-15rem)] aspect-[1280/900] border-0"
+              }
+            />
+          </div>
         </div>
       )}
 
-      <LiveTerminal logs={logs} running={running} />
+      <LiveTerminal logs={logs} running={liveRunning} pulseAt={pulseAt} runStartedAt={runStartedAt} />
 
       <div>
         <h2 className="font-medium mb-3">运行历史</h2>

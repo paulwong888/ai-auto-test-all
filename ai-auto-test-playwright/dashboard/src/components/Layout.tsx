@@ -20,9 +20,14 @@ export function Layout() {
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-slate-800 bg-slate-900/80 px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <Link to="/projects" className="text-lg font-semibold text-emerald-400">
-            AI Auto Test Playwright
-          </Link>
+          <div className="flex items-center gap-4 min-w-0">
+            <Link to="/projects" className="text-lg font-semibold text-emerald-400 shrink-0">
+              AI Auto Test Playwright
+            </Link>
+            <Link to="/settings/llm" className="text-sm text-slate-400 hover:text-slate-200 shrink-0">
+              模型配置
+            </Link>
+          </div>
           {id && (
             <span className="text-sm text-slate-400 font-mono truncate max-w-md">{id}</span>
           )}
@@ -48,8 +53,12 @@ export function Layout() {
               }`;
 
               if (!enabled) {
+                const hint =
+                  workflow?.stageStatus === "generating"
+                    ? "Plan/Codegen 生成中，请稍候"
+                    : "尚未到达该阶段";
                 return (
-                  <span key={tab.path || "overview"} className={className} title="尚未到达该阶段">
+                  <span key={tab.path || "overview"} className={className} title={hint}>
                     {tab.label}
                   </span>
                 );

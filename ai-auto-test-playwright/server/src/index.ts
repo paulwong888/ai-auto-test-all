@@ -28,19 +28,36 @@ import { GitService } from "./services/git-service.js";
 import { RecorderService } from "./services/recorder-service.js";
 import { JobScheduler } from "./services/job-scheduler.js";
 import { AuditService } from "./services/audit-service.js";
+import { LlmConfigService } from "./services/llm-config-service.js";
+import { PiAgentConfigWriter } from "./services/pi-agent-config-writer.js";
+import { createSettingsRouter } from "./routes/settings.js";
+import { PlatformPipelineService } from "./services/platform-pipeline-service.js";
+import { TemporalBlockingService } from "./services/temporal-blocking-service.js";
+import { createTemporalInternalRouter } from "./routes/temporal-internal.js";
 import { wsHub } from "./ws/ws-hub.js";
 
 const app = express();
 const projectService = new ProjectService(config);
 const templateService = new ProjectTemplateService(config);
 const workflowService = new WorkflowService(projectService, templateService);
-const piJobRunner = new PiJobRunner(config);
+const llmConfigService = new LlmConfigService(config);
+const piAgentConfigWriter = new PiAgentConfigWriter();
+const piJobRunner = new PiJobRunner(config, llmConfigService, piAgentConfigWriter);
 const planService = new PlanService(config, projectService, piJobRunner);
 const codegenService = new CodegenService(config, projectService, piJobRunner);
 const runService = new RunService(config, projectService);
 const collectService = new PytestCollectService(config, projectService);
 const fixService = new FixService(config, projectService, piJobRunner);
 fixService.setRunService(runService);
+const platformPipelineService = new PlatformPipelineService(config, projectService);
+const temporalBlockingService = new TemporalBlockingService({
+  planService,
+  codegenService,
+  runService,
+  fixService,
+  piJobs: piJobRunner,
+  pipelineRuns: platformPipelineService.getRepository(),
+});
 const gitService = new GitService(templateService);
 const recorderService = new RecorderService(projectService);
 const auditService = new AuditService();
@@ -50,9 +67,14 @@ jobScheduler.start();
 app.use(cors());
 app.use(express.json());
 
-app.use("/health", createHealthRouter(projectService, runService));
+app.use("/health", createHealthRouter(projectService, runService, platformPipelineService));
+app.use(
+  "/internal/temporal",
+  createTemporalInternalRouter(config, temporalBlockingService, platformPipelineService),
+);
 app.use("/api/auth", createAuthRouter());
 app.use("/api/webhooks", createWebhooksRouter(runService));
+app.use("/api/settings", requireAuth, createSettingsRouter(llmConfigService));
 
 app.use("/api/projects", requireAuth, createProjectsRouter(projectService, {
   workflowService,
@@ -64,6 +86,8 @@ app.use("/api/projects", requireAuth, createProjectsRouter(projectService, {
   gitService,
   recorderService,
   auditService,
+  llmConfigService,
+  platformPipelineService,
 }));
 app.use("/api/jobs", requireAuth, createJobsRouter({ piJobRunner, runService }));
 
@@ -96,6 +120,7 @@ server.on("upgrade", (req, socket, head) => {
 
 async function main(): Promise<void> {
   await initDatabase(config);
+  await llmConfigService.seedFromEnvIfEmpty();
   server.listen(config.port, config.host, () => {
     console.log(`[server] listening on http://${config.host}:${config.port}`);
     console.log(`[server] WebSocket ws://${config.host}:${config.port}/ws`);

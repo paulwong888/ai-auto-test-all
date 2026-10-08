@@ -10,6 +10,8 @@ import {
 } from "../repositories/plan-version-repository.js";
 import { WorkflowStateRepository } from "../repositories/workflow-state-repository.js";
 import { buildPlanPrompt } from "./plan-prompt.js";
+import { LlmConfigService } from "./llm-config-service.js";
+import { PiAgentConfigWriter } from "./pi-agent-config-writer.js";
 import { PiJobRunner, type PiJobContext } from "./pi-job-runner.js";
 import type { ProjectService } from "./project-service.js";
 
@@ -25,7 +27,9 @@ export class PlanService {
     private readonly projectService: ProjectService,
     piJobs?: PiJobRunner,
   ) {
-    this.piJobs = piJobs ?? new PiJobRunner(config);
+    this.piJobs =
+      piJobs ??
+      new PiJobRunner(config, new LlmConfigService(config), new PiAgentConfigWriter());
   }
 
   async resolveModuleName(projectId: string, moduleName?: string): Promise<string> {

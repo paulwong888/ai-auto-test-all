@@ -8,6 +8,7 @@ import { RunRepository, type RunRecord } from "../repositories/run-repository.js
 import { WorkflowStateRepository } from "../repositories/workflow-state-repository.js";
 import { readNdjsonStream } from "../utils/ndjson-stream.js";
 import { parsePytestSummaryFromLogs } from "../utils/pytest-summary.js";
+import { fetchWorkerStream } from "../utils/worker-fetch.js";
 import { wsHub } from "../ws/ws-hub.js";
 import { buildPytestCommand, type PytestRunOptions } from "./pytest-runner.js";
 import {
@@ -22,6 +23,40 @@ import type { ProjectService } from "./project-service.js";
 import { parseFailedNodeIdsFromLogs } from "../utils/pytest-node-ids.js";
 
 export type RunStartOptions = RunRequestBody;
+
+function buildRunAbortSignal(
+  abortController: AbortController | null,
+  runTimeoutMs: number,
+): AbortSignal | undefined {
+  const signals: AbortSignal[] = [];
+  if (abortController) {
+    signals.push(abortController.signal);
+  }
+  signals.push(AbortSignal.timeout(runTimeoutMs));
+  return signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+}
+
+function formatWorkerStreamError(err: unknown): string {
+  if (!(err instanceof Error)) {
+    return String(err);
+  }
+  const name = err.name;
+  const code = (err as NodeJS.ErrnoException).code;
+  if (
+    name === "BodyTimeoutError" ||
+    code === "UND_ERR_BODY_TIMEOUT" ||
+    /body timeout/i.test(err.message)
+  ) {
+    return "Worker log stream idle timeout before pytest finished";
+  }
+  if (name === "AbortError" || err.message === "This operation was aborted") {
+    return "Run aborted (cancelled or exceeded RUN_TIMEOUT_MS)";
+  }
+  if (/terminated|ECONNRESET|socket hang up/i.test(err.message)) {
+    return "Worker stream disconnected before pytest finished";
+  }
+  return err.message;
+}
 
 export interface ActiveRunSnapshot {
   runId: string;
@@ -271,6 +306,24 @@ export class RunService {
     return abs;
   }
 
+  async readRunLog(projectId: string, runId: string): Promise<string> {
+    const run = await this.getRun(projectId, runId);
+    if (!run) {
+      throw new AppError("RUN_NOT_FOUND", `Run not found: ${runId}`, 404);
+    }
+    const project = await this.projectService.getById(projectId);
+    if (!project) {
+      throw new AppError("PROJECT_NOT_FOUND", `Project not found: ${projectId}`, 404);
+    }
+    const rel = run.logPath ?? `tests/.runs/${runId}/run.log`;
+    const abs = path.join(project.workspacePath, rel);
+    try {
+      return await fs.readFile(abs, "utf-8");
+    } catch {
+      return "";
+    }
+  }
+
   async getTracePath(
     projectId: string,
     runId: string,
@@ -308,7 +361,7 @@ export class RunService {
     let finishedPayload: Record<string, unknown> | null = null;
 
     try {
-      const response = await fetch(`${this.config.workerUrl}/internal/run`, {
+      const response = await fetchWorkerStream(`${this.config.workerUrl}/internal/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -317,7 +370,7 @@ export class RunService {
           command,
           vncPreview,
         }),
-        signal: this.abortController?.signal,
+        signal: buildRunAbortSignal(this.abortController, this.config.runTimeoutMs),
       });
 
       if (!response.ok) {
@@ -325,9 +378,18 @@ export class RunService {
       }
 
       for await (const event of readNdjsonStream(response.body)) {
+        if (event.type === "heartbeat") {
+          wsHub.broadcast({
+            type: "run_pulse",
+            runId: run.id,
+            ts: typeof event.ts === "number" ? event.ts : Date.now(),
+          });
+          continue;
+        }
         if (event.type === "log" && typeof event.line === "string") {
           logLines.push(event.line);
           wsHub.broadcast({ type: "run_log", runId: run.id, line: event.line });
+          void this.appendRunLogLine(workspacePath, run.id, event.line);
         }
         if (event.type === "finished") {
           finishedPayload = event;
@@ -347,7 +409,7 @@ export class RunService {
         });
         return;
       }
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatWorkerStreamError(err);
       await this.finalizeRun(run, {
         status: "failed",
         passed: 0,
@@ -484,6 +546,20 @@ export class RunService {
     this.activeRunsByProject.delete(run.projectId);
     this.cancelled = false;
     this.abortController = null;
+  }
+
+  private async appendRunLogLine(
+    workspacePath: string,
+    runId: string,
+    line: string,
+  ): Promise<void> {
+    const dir = path.join(workspacePath, "tests/.runs", runId);
+    try {
+      await fs.mkdir(dir, { recursive: true });
+      await fs.appendFile(path.join(dir, "run.log"), `${line}\n`);
+    } catch {
+      // non-fatal: streaming to client remains primary
+    }
   }
 
   private async writeRunMeta(

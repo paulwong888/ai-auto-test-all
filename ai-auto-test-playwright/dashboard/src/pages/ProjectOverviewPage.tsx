@@ -129,6 +129,12 @@ export function ProjectOverviewPage() {
               >
                 成员
               </Link>
+              <Link
+                to={`/projects/${id}/settings/llm`}
+                className="px-4 py-2 rounded border border-slate-600 text-sm hover:bg-slate-800"
+              >
+                模型
+              </Link>
             </>
           )}
         </div>

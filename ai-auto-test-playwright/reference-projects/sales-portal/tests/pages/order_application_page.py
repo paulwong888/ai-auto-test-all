@@ -20,7 +20,17 @@ class OrderApplicationPage:
 
     def expand_field(self, index: int = 2) -> None:
         dismiss_shop_cart_drawer(self.page)
+        for _ in range(3):
+            icon = self.page.locator("i").nth(index)
+            if icon.count() == 0:
+                self.page.wait_for_timeout(400)
+                continue
+            try:
+                expect(icon).to_be_visible(timeout=10_000)
+                icon.click(force=True)
+                return
+            except Exception:
+                self.page.wait_for_timeout(400)
         icon = self.page.locator("i").nth(index)
         expect(icon).to_be_visible(timeout=15_000)
-        icon.scroll_into_view_if_needed()
-        icon.click()
+        icon.click(force=True)

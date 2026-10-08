@@ -24,9 +24,6 @@ export function isTabEnabled(
   workflow: WorkflowState | null,
 ): boolean {
   if (!workflow) return tab === "overview";
-  if (workflow.stageStatus === "generating" || workflow.stageStatus === "running") {
-    return tab === "overview";
-  }
   const minStage: Record<typeof tab, WorkflowStage> = {
     overview: "init",
     record: "init",
@@ -34,7 +31,15 @@ export function isTabEnabled(
     code: "plan",
     run: "code",
   };
-  return stageIndex(workflow.stage) >= stageIndex(minStage[tab]);
+  if (stageIndex(workflow.stage) < stageIndex(minStage[tab])) {
+    return false;
+  }
+  // Plan/Codegen 生成中：全局锁，仅保留概览
+  if (workflow.stageStatus === "generating") {
+    return tab === "overview";
+  }
+  // pytest running：已解锁 Tab 保持可点（长用例时导航栏不再整排消失）
+  return true;
 }
 
 export function useWorkflow(projectId: string | undefined) {

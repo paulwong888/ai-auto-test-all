@@ -137,6 +137,15 @@ export function createRunRouter(
     }
   });
 
+  router.get("/runs/:runId/log", requireProjectRole("owner", "editor", "viewer", "ci_bot"), async (req, res) => {
+    try {
+      const text = await runService.readRunLog(projectId(req), paramString(req.params.runId));
+      res.json({ ok: true, data: { text } });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
   router.get("/runs/:runId/report", async (req, res) => {
     try {
       const reportPath = await runService.getReportPath(projectId(req), req.params.runId!);

@@ -33,12 +33,21 @@ export const config = {
   workerUrl: process.env.WORKER_URL ?? "http://worker:8081",
   workerVncHost: process.env.WORKER_VNC_HOST ?? "worker",
   workerVncPort: Number(process.env.WORKER_VNC_PORT ?? 6080),
+  /** pytest run 总超时（Server fetch abort + Worker 进程 kill 对齐） */
+  runTimeoutMs: Number(process.env.RUN_TIMEOUT_MS ?? 600_000),
   pi: {
     cliPath: process.env.PI_CLI_PATH ?? "pi",
     rpcArgs: (process.env.PI_RPC_ARGS ?? "--no-session").split(/\s+/).filter(Boolean),
     provider: process.env.PI_PROVIDER ?? "dashscope",
     model: process.env.PI_MODEL ?? "qwen-plus",
-    runTimeoutMs: Number(process.env.RUN_TIMEOUT_MS ?? 600_000),
+    /** Plan/code/fix Pi RPC 等待 agent_settled 的上限（与 pytest RUN_TIMEOUT_MS 分离） */
+    runTimeoutMs: Number(process.env.PI_JOB_TIMEOUT_MS ?? process.env.RUN_TIMEOUT_MS ?? 1_800_000),
+  },
+  temporal: {
+    address: process.env.TEMPORAL_ADDRESS ?? "172.26.9.212:7233",
+    namespace: process.env.TEMPORAL_NAMESPACE ?? "default",
+    taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? "playwright-platform",
+    internalToken: process.env.TEMPORAL_INTERNAL_TOKEN ?? "dev-temporal-internal",
   },
 };
 

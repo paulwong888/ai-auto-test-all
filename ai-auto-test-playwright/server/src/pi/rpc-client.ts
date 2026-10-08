@@ -21,6 +21,7 @@ export interface PiRpcClientOptions {
   cwd: string;
   piCliPath?: string;
   rpcArgs?: string[];
+  env?: NodeJS.ProcessEnv;
   commandTimeoutMs?: number;
   onProgress?: (event: PiProgressEvent) => void;
 }
@@ -49,7 +50,7 @@ export class PiRpcClient extends EventEmitter {
     const child = spawn(this.options.piCliPath ?? "pi", args, {
       cwd: this.options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: { ...process.env, ...this.options.env },
     });
 
     this.process = child;

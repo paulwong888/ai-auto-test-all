@@ -10,6 +10,7 @@ RUN apt-get update \
     xvfb \
     xauth \
     x11vnc \
+    fluxbox \
     websockify \
     novnc \
     curl \

@@ -18,6 +18,8 @@ import {
   parsePatchesArray,
   selectPatches,
 } from "./fix-patch-parser.js";
+import { LlmConfigService } from "./llm-config-service.js";
+import { PiAgentConfigWriter } from "./pi-agent-config-writer.js";
 import { PiJobRunner, type PiJobContext } from "./pi-job-runner.js";
 import type { ProjectService } from "./project-service.js";
 import type { RunService } from "./run-service.js";
@@ -38,7 +40,9 @@ export class FixService {
     private readonly projectService: ProjectService,
     piJobs?: PiJobRunner,
   ) {
-    this.piJobs = piJobs ?? new PiJobRunner(config);
+    this.piJobs =
+      piJobs ??
+      new PiJobRunner(config, new LlmConfigService(config), new PiAgentConfigWriter());
   }
 
   setRunService(runService: RunService): void {
@@ -118,6 +122,31 @@ export class FixService {
     });
   }
 
+  async applyAllFixPatches(
+    projectId: string,
+    suggestionId: string,
+  ): Promise<{
+    appliedFiles: string[];
+    skippedFiles: string[];
+    iteration: number;
+  }> {
+    const suggestion = await this.fixSuggestions.findById(suggestionId);
+    if (!suggestion) {
+      throw new AppError("FIX_NOT_FOUND", "Fix suggestion not found", 404);
+    }
+    const patchIndexes = suggestion.patches.map((_, index) => index);
+    const data = await this.applyFix(projectId, {
+      suggestionId,
+      patchIndexes: patchIndexes.length > 0 ? patchIndexes : [0],
+      autoVerify: false,
+    });
+    return {
+      appliedFiles: data.appliedFiles,
+      skippedFiles: data.skippedFiles,
+      iteration: data.iteration,
+    };
+  }
+
   async applyFix(
     projectId: string,
     input: {
@@ -127,6 +156,7 @@ export class FixService {
     },
   ): Promise<{
     appliedFiles: string[];
+    skippedFiles: string[];
     verifyRunId: string | null;
     iteration: number;
   }> {
@@ -151,7 +181,10 @@ export class FixService {
 
     const patches = selectPatches(suggestion.patches, input.patchIndexes);
     const project = await this.requireProject(projectId);
-    const { appliedFiles } = await this.fixApply.applyPatches(project.workspacePath, patches);
+    const { appliedFiles, skippedFiles } = await this.fixApply.applyPatches(
+      project.workspacePath,
+      patches,
+    );
 
     const iteration = currentIteration + 1;
     const iterationId = randomUUID();
@@ -168,7 +201,7 @@ export class FixService {
       verifyRunId = await this.startVerifyRun(projectId, suggestion.runId, iterationId);
     }
 
-    return { appliedFiles, verifyRunId, iteration };
+    return { appliedFiles, skippedFiles, verifyRunId, iteration };
   }
 
   async verifyFix(

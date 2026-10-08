@@ -11,11 +11,13 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 PORT = int(os.environ.get("PORT", "8081"))
 RUN_TIMEOUT_MS = int(os.environ.get("RUN_TIMEOUT_MS", "600000"))
 POST_RUN_WAIT_SEC = int(os.environ.get("POST_RUN_WAIT_SEC", "30"))
+HEARTBEAT_INTERVAL_SEC = int(os.environ.get("HEARTBEAT_INTERVAL_SEC", "30"))
 PASSED_RE = re.compile(r"(\d+)\s+passed", re.IGNORECASE)
 FAILED_RE = re.compile(r"(\d+)\s+failed", re.IGNORECASE)
 SKIPPED_RE = re.compile(r"(\d+)\s+skipped", re.IGNORECASE)
@@ -80,7 +82,9 @@ def parse_collect_output(text: str) -> list[dict[str, str | None]]:
             continue
         seen.add(node_id)
         tc = extract_tc_from_node(node_id)
-        name = tc or node_id.rsplit("::", 1)[-1]
+        func = re.sub(r"\[.*\]$", "", node_id.rsplit("::", 1)[-1])
+        label = func[len("test_") :].replace("_", " ") if func.startswith("test_") else func
+        name = label or tc or func
         items.append({"nodeId": node_id, "name": name, "tc": tc})
     return items
 
@@ -104,20 +108,105 @@ def run_collect(command: str) -> dict[str, Any]:
     }
 
 
-def emit(writer: Any, payload: dict[str, Any]) -> None:
-    line = json.dumps(payload, ensure_ascii=False) + "\n"
-    writer.write(line.encode("utf-8"))
-    writer.flush()
+def emit(writer: Any, payload: dict[str, Any]) -> bool:
+    try:
+        line = json.dumps(payload, ensure_ascii=False) + "\n"
+        writer.write(line.encode("utf-8"))
+        writer.flush()
+        return True
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        return False
 
 
-def run_command(run_id: str, command: str, writer: Any, vnc_preview: bool = False) -> None:
+def _run_dir(workspace_path: str | None, run_id: str) -> Path | None:
+    if not workspace_path:
+        return None
+    return Path(workspace_path) / "tests" / ".runs" / run_id
+
+
+def _append_local_log(run_dir: Path | None, line: str) -> None:
+    if run_dir is None:
+        return
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        with open(run_dir / "run.log", "a", encoding="utf-8") as f:
+            f.write(line.rstrip("\n") + "\n")
+    except OSError as exc:
+        sys.stderr.write(f"[worker] failed to write local run.log: {exc}\n")
+
+
+def _write_local_meta(
+    run_dir: Path | None,
+    run_id: str,
+    *,
+    status: str,
+    exit_code: int,
+    passed: int,
+    failed: int,
+    skipped: int,
+    duration_ms: int,
+    error: str | None = None,
+) -> None:
+    if run_dir is None:
+        return
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        meta = {
+            "runId": run_id,
+            "status": status,
+            "passed": passed,
+            "failed": failed,
+            "skipped": skipped,
+            "durationMs": duration_ms,
+            "exitCode": exit_code,
+            "error": error,
+            "finishedAt": time.time(),
+            "clientDisconnected": True,
+        }
+        with open(run_dir / "run-meta.json", "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+    except OSError as exc:
+        sys.stderr.write(f"[worker] failed to write local run-meta.json: {exc}\n")
+
+
+def _heartbeat_loop(
+    writer: Any,
+    connected: threading.Event,
+    stop: threading.Event,
+) -> None:
+    while not stop.wait(HEARTBEAT_INTERVAL_SEC):
+        if not connected.is_set():
+            continue
+        if not emit(writer, {"type": "heartbeat", "ts": time.time()}):
+            connected.clear()
+
+
+def run_command(
+    run_id: str,
+    command: str,
+    writer: Any,
+    *,
+    workspace_path: str | None = None,
+    vnc_preview: bool = False,
+) -> None:
     started = time.time()
     output_chunks: list[str] = []
+    run_dir = _run_dir(workspace_path, run_id)
+    client_connected = threading.Event()
+    client_connected.set()
+    stop_heartbeat = threading.Event()
+    heartbeat = threading.Thread(
+        target=_heartbeat_loop,
+        args=(writer, client_connected, stop_heartbeat),
+        daemon=True,
+    )
+    heartbeat.start()
 
     headed = "--headed" in command
-    if headed and vnc_preview:
+    display = ":99" if Path("/tmp/.X11-unix/X99").exists() else None
+    if headed and (vnc_preview or display):
         wrapped = f"sh -c {json.dumps(command)}"
-        run_env = {**os.environ, "DISPLAY": ":99"}
+        run_env = {**os.environ, "DISPLAY": display or ":99"}
     elif headed:
         wrapped = f"xvfb-run -a sh -c {json.dumps(command)}"
         run_env = None
@@ -145,7 +234,15 @@ def run_command(run_id: str, command: str, writer: Any, vnc_preview: bool = Fals
         assert proc.stdout is not None
         for line in proc.stdout:
             output_chunks.append(line)
-            emit(writer, {"type": "log", "stream": "stdout", "line": line.rstrip("\n")})
+            stripped = line.rstrip("\n")
+            if client_connected.is_set():
+                if not emit(writer, {"type": "log", "stream": "stdout", "line": stripped}):
+                    client_connected.clear()
+                    sys.stderr.write(
+                        f"[worker] run {run_id}: client disconnected, continuing pytest locally\n"
+                    )
+            if not client_connected.is_set():
+                _append_local_log(run_dir, stripped)
 
         grace_sec = min(POST_RUN_WAIT_SEC, timeout_sec)
         try:
@@ -163,31 +260,53 @@ def run_command(run_id: str, command: str, writer: Any, vnc_preview: bool = Fals
                 except OSError:
                     proc.kill()
                 exit_code = proc.wait(timeout=5)
-            emit(
-                writer,
-                {
-                    "type": "log",
-                    "stream": "stderr",
-                    "line": f"pytest process did not exit within {grace_sec}s after output ended; killed",
-                },
-            )
+            msg = f"pytest process did not exit within {grace_sec}s after output ended; killed"
+            if client_connected.is_set():
+                if not emit(
+                    writer,
+                    {"type": "log", "stream": "stderr", "line": msg},
+                ):
+                    client_connected.clear()
+            if not client_connected.is_set():
+                _append_local_log(run_dir, msg)
     finally:
+        stop_heartbeat.set()
+        heartbeat.join(timeout=1)
         with _lock:
             _active_processes.pop(run_id, None)
 
     summary = parse_pytest_summary("".join(output_chunks))
     duration_ms = summary.get("durationMs") or int((time.time() - started) * 1000)
-    emit(
-        writer,
-        {
-            "type": "finished",
-            "exitCode": exit_code,
-            "passed": summary["passed"],
-            "failed": summary["failed"],
-            "skipped": summary["skipped"],
-            "durationMs": duration_ms,
-        },
-    )
+    finished = {
+        "type": "finished",
+        "exitCode": exit_code,
+        "passed": summary["passed"],
+        "failed": summary["failed"],
+        "skipped": summary["skipped"],
+        "durationMs": duration_ms,
+    }
+
+    if client_connected.is_set():
+        emit(writer, finished)
+    else:
+        status = "failed" if exit_code != 0 or summary["failed"] > 0 else "passed"
+        _write_local_meta(
+            run_dir,
+            run_id,
+            status=status,
+            exit_code=exit_code,
+            passed=summary["passed"],
+            failed=summary["failed"],
+            skipped=summary["skipped"],
+            duration_ms=duration_ms,
+            error="Client disconnected before stream finished",
+        )
+        if run_dir is not None:
+            try:
+                with open(run_dir / "run.log", "w", encoding="utf-8") as f:
+                    f.write("".join(output_chunks))
+            except OSError as exc:
+                sys.stderr.write(f"[worker] failed to flush local run.log: {exc}\n")
 
 
 def cancel_run(run_id: str) -> bool:
@@ -244,6 +363,7 @@ class WorkerHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
             run_id = str(payload.get("runId", ""))
             command = str(payload.get("command", ""))
+            workspace_path = str(payload.get("workspacePath", "")).strip() or None
             vnc_preview = payload.get("vncPreview") is True
             if not run_id or not command:
                 self._send_json(400, {"ok": False, "error": "runId and command are required"})
@@ -253,7 +373,13 @@ class WorkerHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/x-ndjson")
             self.end_headers()
 
-            run_command(run_id, command, self.wfile, vnc_preview=vnc_preview)
+            run_command(
+                run_id,
+                command,
+                self.wfile,
+                workspace_path=workspace_path,
+                vnc_preview=vnc_preview,
+            )
             return
 
         if self.path == "/internal/cancel":

@@ -1,5 +1,13 @@
+interface NdjsonBodyReader {
+  read(): Promise<{ done: boolean; value?: Uint8Array }>;
+}
+
+interface NdjsonBody {
+  getReader(): NdjsonBodyReader;
+}
+
 export async function* readNdjsonStream(
-  body: ReadableStream<Uint8Array> | null,
+  body: NdjsonBody | null | undefined,
 ): AsyncGenerator<Record<string, unknown>> {
   if (!body) return;
 

@@ -14,7 +14,7 @@ export interface RunRequestBody {
   nodeIds?: string[];
   rerunFailedOnly?: boolean;
   previousRunId?: string | null;
-  triggerSource?: "web" | "ci" | "api";
+  triggerSource?: "web" | "ci" | "api" | "temporal";
   purpose?: string;
 }
 

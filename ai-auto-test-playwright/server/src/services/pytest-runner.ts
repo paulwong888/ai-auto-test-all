@@ -40,6 +40,7 @@ export function buildPytestCommand(options: PytestRunOptions): string {
     "--tracing retain-on-failure",
     "--output test-results",
     "--html report.html --self-contained-html",
+    "-s",
     "-v",
   ].filter(Boolean);
 

@@ -7,6 +7,8 @@ import { PlanVersionRepository } from "../repositories/plan-version-repository.j
 import { WorkflowStateRepository } from "../repositories/workflow-state-repository.js";
 import { buildCodePrompt } from "./code-prompt.js";
 import { readFileContentIfText } from "../utils/text-file-content.js";
+import { LlmConfigService } from "./llm-config-service.js";
+import { PiAgentConfigWriter } from "./pi-agent-config-writer.js";
 import { PiJobRunner, type PiJobContext } from "./pi-job-runner.js";
 import type { ProjectService } from "./project-service.js";
 
@@ -20,7 +22,9 @@ export class CodegenService {
     private readonly projectService: ProjectService,
     piJobs?: PiJobRunner,
   ) {
-    this.piJobs = piJobs ?? new PiJobRunner(config);
+    this.piJobs =
+      piJobs ??
+      new PiJobRunner(config, new LlmConfigService(config), new PiAgentConfigWriter());
   }
 
   async startCodeGeneration(

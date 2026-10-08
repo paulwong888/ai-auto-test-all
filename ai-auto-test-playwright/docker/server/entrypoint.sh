@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 
+# 冷启动 fallback：Pi 任务优先使用 DB 配置（job 级 HOME/.pi/agent）。
+# 此处写入的 ~/.pi/agent 仅在无 DB 配置或调试时生效。
 PI_AGENT_DIR="/root/.pi/agent"
 mkdir -p "$PI_AGENT_DIR"
 

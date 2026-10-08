@@ -4,7 +4,8 @@
   "private": true,
   "workspaces": [
     "server",
-    "dashboard"
+    "dashboard",
+    "temporal-worker"
   ],
   "scripts": {
     "dev": "npm run dev -w server",

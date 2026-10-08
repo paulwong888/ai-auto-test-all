@@ -50,7 +50,12 @@ export function FixReviewPage() {
     setError(null);
     setMessage(null);
     try {
-      const data = await fetchJson<{ appliedFiles: string[]; verifyRunId: string | null; iteration: number }>(
+      const data = await fetchJson<{
+        appliedFiles: string[];
+        skippedFiles: string[];
+        verifyRunId: string | null;
+        iteration: number;
+      }>(
         `/api/projects/${id}/fix/apply`,
         {
           method: "POST",
@@ -62,8 +67,11 @@ export function FixReviewPage() {
           }),
         },
       );
+      const skipped = data.skippedFiles?.length ?? 0;
       setMessage(
-        `已应用 ${data.appliedFiles.length} 个文件（第 ${data.iteration} 轮）${
+        `已应用 ${data.appliedFiles.length} 个文件${
+          skipped ? `，${skipped} 个已是最新内容已跳过` : ""
+        }（第 ${data.iteration} 轮）${
           data.verifyRunId ? `，验证 run: ${data.verifyRunId.slice(0, 8)}` : ""
         }`,
       );

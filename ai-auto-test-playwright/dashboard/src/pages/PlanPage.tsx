@@ -222,7 +222,15 @@ export function PlanPage() {
         }),
       });
       const job = await pollJob(jobId);
-      if (job.status === "failed") throw new Error(job.error ?? "代码生成失败");
+      if (job.status === "failed") {
+        const msg = job.error ?? "代码生成失败";
+        if (msg.includes("agent_settled")) {
+          throw new Error(
+            `${msg}（Pi 代码生成超时，请在「模型配置」确认 LLM 可用，并提高 docker/.env.local 的 PI_JOB_TIMEOUT_MS，默认建议 1800000）`,
+          );
+        }
+        throw new Error(msg);
+      }
       setMessage("代码已生成，请前往「代码」页查看");
     } catch (err) {
       setError(err instanceof Error ? err.message : "代码生成失败");

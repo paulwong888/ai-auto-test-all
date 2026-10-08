@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { AppConfig } from "../config.js";
 import { AppError } from "../errors.js";
 import { PiRpcClient } from "../pi/rpc-client.js";
+import type { LlmConfigService } from "./llm-config-service.js";
+import { PiAgentConfigWriter } from "./pi-agent-config-writer.js";
 import type { PiProgressEvent, WsMessage } from "../pi/types.js";
 import type { JobRecord, JobType } from "../repositories/job-repository.js";
 import { JobRepository } from "../repositories/job-repository.js";
@@ -33,7 +35,11 @@ export class PiJobRunner {
   private readonly jobs = new JobRepository();
   private readonly running = new Map<string, RunningJobHandle>();
 
-  constructor(private readonly config: AppConfig) {}
+  constructor(
+    private readonly config: AppConfig,
+    private readonly llmConfigService: LlmConfigService,
+    private readonly piAgentConfigWriter: PiAgentConfigWriter,
+  ) {}
 
   async startJob(
     ctx: PiJobContext,
@@ -116,10 +122,26 @@ export class PiJobRunner {
     const handle = this.running.get(jobId);
     if (!handle) return;
 
+    const resolved = await this.llmConfigService.resolveForProject(ctx.projectId);
+    let homeDir = "";
+    try {
+      ({ homeDir } = await this.piAgentConfigWriter.write(jobId, resolved));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new AppError("PI_CONFIG_FAILED", `Failed to write Pi agent config: ${message}`, 500);
+    }
+
     const client = new PiRpcClient({
       cwd: ctx.workspacePath,
       piCliPath: this.config.pi.cliPath,
-      rpcArgs: this.config.pi.rpcArgs,
+      rpcArgs: [
+        ...this.config.pi.rpcArgs,
+        "--provider",
+        resolved.provider,
+        "--model",
+        resolved.defaultModel,
+      ],
+      env: { HOME: homeDir },
       commandTimeoutMs: 30_000,
       onProgress: (event) => this.onProgress(jobId, ctx.projectId, event),
     });
@@ -176,6 +198,9 @@ export class PiJobRunner {
       wsHub.broadcast(definition.failedWs(ctx, jobId, message));
     } finally {
       client.stop();
+      if (homeDir) {
+        await this.piAgentConfigWriter.cleanup(homeDir);
+      }
       this.running.delete(jobId);
     }
   }

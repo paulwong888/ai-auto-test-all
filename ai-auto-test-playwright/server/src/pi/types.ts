@@ -109,8 +109,20 @@ export type WsMessage =
       vncToken?: string;
     }
   | { type: "run_log"; runId: string; line: string }
+  | { type: "run_pulse"; runId: string; ts: number }
   | { type: "run_finished"; runId: string; passed: number; failed: number; skipped: number; durationMs: number }
   | { type: "job_queued"; projectId: string; jobId: string; jobType: string }
   | { type: "job_started"; projectId: string; jobId: string }
   | { type: "job_completed"; projectId: string; jobId: string }
-  | { type: "job_failed"; projectId: string; jobId: string; error: string };
+  | { type: "job_failed"; projectId: string; jobId: string; error: string }
+  | { type: "pipeline_started"; pipelineRunId: string; projectId: string; temporalWorkflowId: string }
+  | {
+      type: "pipeline_progress";
+      pipelineRunId: string;
+      projectId: string;
+      stage: string;
+      status: string;
+      runId?: string | null;
+      fixIteration?: number;
+      error?: string | null;
+    };

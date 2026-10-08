@@ -10,6 +10,10 @@ import type { WorkflowService } from "../services/workflow-service.js";
 import type { GitService } from "../services/git-service.js";
 import type { RecorderService } from "../services/recorder-service.js";
 import type { AuditService } from "../services/audit-service.js";
+import type { LlmConfigService } from "../services/llm-config-service.js";
+import type { PlatformPipelineService } from "../services/platform-pipeline-service.js";
+import { createPipelineRouter } from "./pipeline.js";
+import { createProjectLlmSettingsRouter } from "./project-llm-settings.js";
 import { AuthService } from "../services/auth-service.js";
 import { createFixRouter } from "./fix.js";
 import { createPlanRouter } from "./plan.js";
@@ -45,11 +49,14 @@ export function createProjectsRouter(
     gitService: GitService;
     recorderService: RecorderService;
     auditService: AuditService;
+    llmConfigService: LlmConfigService;
+    platformPipelineService: PlatformPipelineService;
   },
 ): Router {
   const router = Router();
 
   if (deps) {
+    router.use("/:id", createPipelineRouter(deps.platformPipelineService));
     router.use("/:id", createPlanRouter(deps.planService));
     router.use("/:id", createWorkflowRouter(deps));
     router.use("/:id", createStatsRouter());
@@ -63,6 +70,7 @@ export function createProjectsRouter(
     router.use("/:id", createTokensRouter());
     router.use("/:id", createMembersRouter(deps.auditService));
     router.use("/:id", createAuditRouter(deps.auditService));
+    router.use("/:id", createProjectLlmSettingsRouter(deps.llmConfigService));
   }
 
   router.get("/", async (req: AuthedRequest, res) => {

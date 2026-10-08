@@ -1,4 +1,6 @@
 """信用卡付款阶段 Page Object。"""
+import re
+
 from playwright.sync_api import Page, expect
 
 from data.credit_card_factory import (
@@ -6,8 +8,13 @@ from data.credit_card_factory import (
     get_credit_card_segments,
     get_expiration_mmyy,
 )
-from pages.overlay_helpers import dismiss_shop_cart_drawer
-from pages.signature_dialog import SignatureDialog
+from conftest import BASE_URL
+from pages.overlay_helpers import dismiss_shop_cart_drawer, resolve_deposit_cart_mismatch
+from pages.signature_dialog import (
+    SignatureDialog,
+    inline_signature_needs_stroke,
+    sign_consent_signature,
+)
 
 CARD_INPUT_CSS = ".p-inputtext.p-component.p-element.form-control.credit-card-input-width"
 
@@ -20,7 +27,8 @@ class PaymentPage:
         self.expiration = page.get_by_role("textbox", name="Expiration date (MMYY)").first
 
     def fill_card_number(self) -> None:
-        dismiss_shop_cart_drawer(self.page)
+        resolve_deposit_cart_mismatch(self.page, BASE_URL)
+        dismiss_shop_cart_drawer(self.page, BASE_URL)
         cards = self.page.locator(CARD_INPUT_CSS)
         if cards.count() >= 3:
             expect(cards.first).to_be_visible(timeout=15_000)
@@ -40,15 +48,17 @@ class PaymentPage:
                 inputs.nth(i).fill(seg)
 
     def sign_card(self) -> None:
-        dismiss_shop_cart_drawer(self.page)
+        dismiss_shop_cart_drawer(self.page, BASE_URL)
         from pages.overlay_helpers import complete_otp_if_present
 
         complete_otp_if_present(self.page)
         expect(self.signature_button).to_be_visible(timeout=15_000)
         self.signature_button.click()
-        dialog = self.page.get_by_role("dialog").filter(has_text="Credit Card")
         SignatureDialog(self.page, dialog_name="Credit Card Signature").sign()
-        expect(self.signature_button).to_be_hidden(timeout=15_000)
+        # SIT 签名完成后弹窗关闭即可；按钮可能仍可见供重签
+        credit_dialog = self.page.get_by_role("dialog").filter(has_text=re.compile(r"Credit Card", re.I))
+        if credit_dialog.count() > 0:
+            expect(credit_dialog.first).to_be_hidden(timeout=15_000)
 
     def fill_name_on_card(self) -> None:
         expect(self.name_on_card).to_be_visible(timeout=15_000)
@@ -59,11 +69,14 @@ class PaymentPage:
         self.expiration.fill(get_expiration_mmyy())
 
     def sign_inline(self) -> None:
-        canvas = self.page.locator("canvas:visible").first
-        if canvas.count() == 0:
-            return
-        box = canvas.bounding_box()
-        if box:
-            canvas.click(position={"x": box["width"] * 0.6, "y": box["height"] * 0.35})
-        else:
-            canvas.click()
+        """页内条款 canvas 签名（Customer Consent / Please sign here）。"""
+        resolve_deposit_cart_mismatch(self.page, BASE_URL)
+        dismiss_shop_cart_drawer(self.page, BASE_URL)
+        for attempt in range(2):
+            sign_consent_signature(self.page)
+            self.page.wait_for_load_state("domcontentloaded")
+            if not inline_signature_needs_stroke(self.page):
+                return
+        raise AssertionError(
+            "Customer Consent 签名后 Please sign here 仍为空，无法进入 SIM 步"
+        )

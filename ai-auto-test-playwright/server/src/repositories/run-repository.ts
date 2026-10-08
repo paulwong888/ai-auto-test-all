@@ -3,7 +3,7 @@ import { query } from "../db/pool.js";
 export type RunStatus = "pending" | "running" | "passed" | "failed" | "cancelled";
 export type RunPreset = "debug" | "ci" | "custom" | null;
 
-export type RunTriggerSource = "web" | "ci" | "api";
+export type RunTriggerSource = "web" | "ci" | "api" | "temporal";
 
 export interface RunRecord {
   id: string;

@@ -12,9 +12,12 @@ class SsoLoginPage:
         self.sign_in_button = page.get_by_role("button", name="Sign In")
 
     def login(self, username: str | None = None, password: str | None = None) -> None:
-        """输入账号密码并点击 Sign In。"""
+        """SSO 表单可见后立即填账号密码（不等 networkidle）。"""
+        expect(self.username).to_be_visible(timeout=15_000)
         self.username.fill(username or get_username())
+        expect(self.password).to_be_visible(timeout=5_000)
         self.password.fill(password or get_password())
+        expect(self.sign_in_button).to_be_enabled(timeout=5_000)
         self.sign_in_button.click()
 
     def expect_error_visible(self) -> None:
