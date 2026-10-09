@@ -107,6 +107,9 @@ def gateway_page_usable(page: Page) -> bool:
 
 
 class GatewayPaymentPage:
+    _NAME_FIELD_RE = re.compile(r"名字\s*\*?")
+    _SURNAME_FIELD_RE = re.compile(r"姓氏\s*\*?")
+
     def __init__(self, page: Page) -> None:
         self.page = page
 
@@ -116,23 +119,120 @@ class GatewayPaymentPage:
             timeout=GATEWAY_READY_TIMEOUT_MS
         )
 
+    def _raise_if_payment_alert(self) -> None:
+        alert = self.page.get_by_role("alert")
+        if alert.count() == 0:
+            return
+        try:
+            if not alert.first.is_visible():
+                return
+            txt = (alert.first.inner_text() or "").strip()
+        except Exception:
+            return
+        if txt:
+            raise AssertionError(f"支付页 alert 阻止继续：{txt[:400]}")
+
+    def _name_field(self):
+        for root in (self.page, *self.page.frames):
+            loc = root.get_by_role("textbox", name=self._NAME_FIELD_RE)
+            if loc.count() > 0:
+                return loc.first
+        return self.page.get_by_role("textbox", name=self._NAME_FIELD_RE).first
+
+    def _surname_field(self):
+        for root in (self.page, *self.page.frames):
+            loc = root.get_by_role("textbox", name=self._SURNAME_FIELD_RE)
+            if loc.count() > 0:
+                return loc.first
+        return self.page.get_by_role("textbox", name=self._SURNAME_FIELD_RE).first
+
+    def _name_field_visible(self) -> bool:
+        try:
+            field = self._name_field()
+            return field.count() > 0 and field.is_visible()
+        except Exception:
+            return False
+
+    def _enter_card_form(self) -> None:
+        """wwwuat 汇总页只有金额+付款；paygwuat 需先点 Visa / 付款 才出现填卡区。"""
+        if self._name_field_visible():
+            return
+
+        self._raise_if_payment_alert()
+
+        visa = self.page.get_by_role("img", name=re.compile(r"^Visa$", re.I))
+        if visa.count() > 0:
+            try:
+                visa.first.click()
+                self.page.wait_for_timeout(600)
+            except Exception:
+                pass
+        if self._name_field_visible():
+            return
+
+        section = self.page.locator(".d-flex.py-4").first
+        if section.count() > 0:
+            try:
+                if section.is_visible():
+                    section.click()
+                    self.page.wait_for_timeout(600)
+            except Exception:
+                pass
+        if self._name_field_visible():
+            return
+
+        pay = self.page.get_by_role("button", name="付款").first
+        expect(pay).to_be_visible(timeout=10_000)
+        pay.scroll_into_view_if_needed()
+        try:
+            with self.page.expect_navigation(timeout=20_000, wait_until="domcontentloaded"):
+                pay.click(force=True)
+        except Exception:
+            pay.click(force=True)
+            self.page.wait_for_load_state("domcontentloaded")
+
+        for _ in range(40):
+            self._raise_if_payment_alert()
+            if self._name_field_visible():
+                return
+            if re.search(r"paygwuat", self.page.url or "", re.I):
+                break
+            self.page.wait_for_timeout(500)
+
+        expect(self._name_field()).to_be_visible(timeout=15_000)
+
     def fill_payer(self) -> None:
         card = get_gateway_card()
-        section = self.page.locator(".d-flex.py-4").first
-        if section.count() > 0 and section.is_visible():
-            section.click()
-        first = self.page.get_by_role("textbox", name="名字 *").first
-        expect(first).to_be_visible(timeout=30_000)
+        self._enter_card_form()
+        first = self._name_field()
+        expect(first).to_be_visible(timeout=15_000)
         first.fill(card["first_name"])
-        self.page.get_by_role("textbox", name="姓氏 *").first.fill(card["last_name"])
+        self._surname_field().fill(card["last_name"])
+
+    def _loc_in_form(self, factory):
+        for root in (self.page, *self.page.frames):
+            loc = factory(root)
+            if loc.count() > 0:
+                return loc.first
+        return factory(self.page).first
 
     def fill_card(self) -> None:
         card = get_gateway_card()
-        self.page.get_by_role("radio", name="Visa").check()
-        self.page.get_by_role("textbox", name="信用卡號碼 *").first.fill(card["number"])
-        self.page.get_by_label("到期月份 *").select_option(card["month"])
-        self.page.get_by_label("到期年份 *").select_option(card["year"])
-        self.page.get_by_role("textbox", name="CVN *").first.fill(card["cvn"])
+        visa = self._loc_in_form(lambda r: r.get_by_role("radio", name="Visa"))
+        if visa.count() > 0:
+            visa.check(force=True)
+        self._loc_in_form(
+            lambda r: r.get_by_role("textbox", name=re.compile(r"信用卡號碼\s*\*?"))
+        ).fill(card["number"])
+        self._loc_in_form(lambda r: r.get_by_label(re.compile(r"到期月份\s*\*?"))).select_option(
+            card["month"]
+        )
+        self._loc_in_form(lambda r: r.get_by_label(re.compile(r"到期年份\s*\*?"))).select_option(
+            card["year"]
+        )
+        self._loc_in_form(
+            lambda r: r.get_by_role("textbox", name=re.compile(r"CVN\s*\*?"))
+        ).fill(card["cvn"])
 
     def submit_pay(self) -> None:
         pay_btn = self.page.get_by_role("button", name="付款").last
@@ -144,7 +244,7 @@ class GatewayPaymentPage:
         )
 
     def complete_payment(self) -> None:
-        """录制：选区块 → 填表 → 付款 → 等待成功回跳。"""
+        """录制：进入填卡页 → 填表 → 付款 → 等待成功回跳。"""
         self.wait_ready()
         self.fill_payer()
         self.fill_card()

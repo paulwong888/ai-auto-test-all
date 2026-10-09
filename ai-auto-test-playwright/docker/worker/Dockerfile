@@ -15,7 +15,10 @@ RUN apt-get update \
     novnc \
     curl \
     ca-certificates \
+    tzdata \
   && rm -rf /var/lib/apt/lists/*
+
+ENV TZ=Asia/Hong_Kong
 
 COPY templates/project-scaffold/requirements.txt /tmp/requirements.txt
 

@@ -63,8 +63,9 @@ export function ReportPage() {
       </div>
 
       <iframe
+        key={runId}
         title="pytest report"
-        src={`/api/projects/${id}/runs/${runId}/report`}
+        src={`/api/projects/${id}/runs/${runId}/report?v=${encodeURIComponent(runId)}`}
         className="flex-1 w-full min-h-[480px] bg-white"
       />
 

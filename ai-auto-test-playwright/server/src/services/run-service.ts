@@ -173,8 +173,10 @@ export class RunService {
       }
     }
 
+    const runId = randomUUID();
     const runOptions: PytestRunOptions = {
       workspacePath: project.workspacePath,
+      runId,
       headed: resolved.headed,
       slowmo: resolved.slowmo,
       specFilter: resolved.specFilter,
@@ -182,7 +184,6 @@ export class RunService {
     };
 
     const now = new Date().toISOString();
-    const runId = randomUUID();
     const jobId = randomUUID();
 
     const run: RunRecord = {
@@ -194,7 +195,7 @@ export class RunService {
       failed: 0,
       skipped: 0,
       durationMs: null,
-      reportPath: "tests/report.html",
+      reportPath: `tests/.runs/${runId}/report.html`,
       logPath: `tests/.runs/${runId}/run.log`,
       options: {
         workspacePath: runOptions.workspacePath,
@@ -298,12 +299,24 @@ export class RunService {
     if (!project) {
       throw new AppError("PROJECT_NOT_FOUND", `Project not found: ${projectId}`, 404);
     }
-    const rel = run.reportPath ?? "tests/report.html";
-    const abs = path.join(project.workspacePath, rel);
-    await fs.access(abs).catch(() => {
-      throw new AppError("REPORT_NOT_FOUND", `Report not found for run ${runId}`, 404);
-    });
-    return abs;
+    const candidates = [
+      run.reportPath,
+      `tests/.runs/${runId}/report.html`,
+    ].filter((p): p is string => Boolean(p));
+    const seen = new Set<string>();
+    for (const rel of candidates) {
+      const norm = rel.replace(/^\/+/, "");
+      if (seen.has(norm)) continue;
+      seen.add(norm);
+      const abs = path.join(project.workspacePath, norm);
+      try {
+        await fs.access(abs);
+        return abs;
+      } catch {
+        /* try next */
+      }
+    }
+    throw new AppError("REPORT_NOT_FOUND", `Report not found for run ${runId}`, 404);
   }
 
   async readRunLog(projectId: string, runId: string): Promise<string> {

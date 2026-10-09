@@ -2,6 +2,7 @@ export const PYTEST_BIN = "/opt/venv/bin/pytest";
 
 export interface PytestRunOptions {
   workspacePath: string;
+  runId?: string;
   headed?: boolean;
   slowmo?: number;
   specFilter?: string | null;
@@ -30,6 +31,10 @@ export function buildPytestCommand(options: PytestRunOptions): string {
     target = options.specFilter;
   }
 
+  const htmlReport = options.runId
+    ? `.runs/${options.runId}/report.html`
+    : "report.html";
+
   const parts = [
     `cd ${shellQuote(`${options.workspacePath}/tests`)}`,
     "&&",
@@ -39,7 +44,7 @@ export function buildPytestCommand(options: PytestRunOptions): string {
     slowmo,
     "--tracing retain-on-failure",
     "--output test-results",
-    "--html report.html --self-contained-html",
+    `--html ${htmlReport} --self-contained-html`,
     "-s",
     "-v",
   ].filter(Boolean);

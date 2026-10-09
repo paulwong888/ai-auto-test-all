@@ -39,8 +39,14 @@ services:
       WORKER_ID: worker-1
       RUN_TIMEOUT_MS: ${RUN_TIMEOUT_MS:-600000}
       POST_RUN_WAIT_SEC: ${POST_RUN_WAIT_SEC:-30}
+      TZ: ${TZ:-Asia/Hong_Kong}
     volumes:
       - ${PROJECTS_DATA_HOST_PATH:-./data/projects}:/data/projects
+      # 与 open-webui 一致：容器时间跟宿主机（pytest-html Report generated on …）
+      - /etc/localtime:/etc/localtime:ro
+    extra_hosts:
+      # 内网 DNS → 172.20.251.172 不可达；固定 Cloudflare 公网 Anycast
+      - "wwwuat.three.com.hk:104.18.3.77"
     networks:
       - app-net
     restart: unless-stopped

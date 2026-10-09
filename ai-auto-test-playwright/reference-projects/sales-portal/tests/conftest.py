@@ -4,7 +4,10 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Browser, BrowserContext, Page, expect
 
-BASE_URL = "https://sales-portal-ogp-sit-crm.apps.ocpuat.three.com.hk/"
+BASE_URL = os.environ.get(
+    "PYTEST_BASE_URL",
+    "https://sales-portal-ogp-sit-crm.apps.ocpuat.three.com.hk/",
+).rstrip("/") + "/"
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 AUTH_FILE = FIXTURES_DIR / "auth.json"
 
