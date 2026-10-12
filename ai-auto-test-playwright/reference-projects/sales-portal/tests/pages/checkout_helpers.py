@@ -9,7 +9,12 @@ from pages.overlay_helpers import (
     dismiss_shop_cart_drawer,
     resolve_deposit_cart_mismatch,
 )
-from pages.signature_dialog import inline_signature_needs_stroke, sign_consent_signature
+from pages.order_application_page import OrderApplicationPage
+from pages.signature_dialog import (
+    expand_consent_signature_section,
+    inline_signature_needs_stroke,
+    sign_consent_signature,
+)
 
 SIM_STEP_BODY_RE = re.compile(r"PRIMARY\s+SIM|SIM\s*&\s*Device|Handset\s+IMEI", re.I)
 SIM_STEP_TEXT_RE = re.compile(r"PRIMARY\s+SIM|SIM\s*&\s*Device", re.I)
@@ -63,8 +68,10 @@ def _dismiss_blocking_overlays(page: Page) -> None:
 
 def _ensure_inline_signature_if_needed(page: Page) -> None:
     """若条款区 canvas 仍空白，补画页内签名。"""
-    if inline_signature_needs_stroke(page):
-        sign_consent_signature(page)
+    if not inline_signature_needs_stroke(page):
+        return
+    expand_consent_signature_section(page)
+    sign_consent_signature(page)
 
 
 def _click_progress_chevron(page: Page) -> None:
@@ -84,12 +91,14 @@ def proceed_to_sim_step(page: Page) -> None:
     """录制：付款后一次 chevron；若仍无 SIM 文案则尝试打开底部购物车侧栏内的继续/结账。"""
     if _sim_visible(page):
         return
+    OrderApplicationPage(page).fill_second_agent_if_required()
     _reverify_mobile_if_hint_visible(page)
     resolve_deposit_cart_mismatch(page, BASE_URL)
     for _ in range(4):
         if _sim_visible(page):
             return
         if inline_signature_needs_stroke(page):
+            expand_consent_signature_section(page)
             sign_consent_signature(page)
         _dismiss_blocking_overlays(page)
         _click_progress_chevron(page)

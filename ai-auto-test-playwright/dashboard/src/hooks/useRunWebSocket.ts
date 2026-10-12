@@ -129,10 +129,10 @@ export function useRunWebSocket() {
       passed: number;
       failed: number;
       skipped: number;
-      durationMs: number;
+      durationMs: number | null;
       finishedAt: string | null;
     }) => {
-      if (run.status === "running" || !run.finishedAt) return;
+      if (run.status === "running" || run.status === "pending" || !run.finishedAt) return;
       setState((prev) => {
         if (!prev.running || prev.runId !== run.id) return prev;
         return {
@@ -146,7 +146,7 @@ export function useRunWebSocket() {
             passed: run.passed,
             failed: run.failed,
             skipped: run.skipped,
-            durationMs: run.durationMs,
+            durationMs: run.durationMs ?? 0,
           },
         };
       });

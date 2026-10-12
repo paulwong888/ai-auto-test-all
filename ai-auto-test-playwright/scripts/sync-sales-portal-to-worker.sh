@@ -18,5 +18,23 @@ if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
   exit 1
 fi
 
+STATE_DIR="${DEST}/.state"
+HKID_USED_BACKUP=""
+SIM_USED_BACKUP=""
+if HKID_USED_BACKUP="$(docker exec "$CONTAINER" cat "${STATE_DIR}/hkid_used.json" 2>/dev/null)"; then
+  :
+fi
+if SIM_USED_BACKUP="$(docker exec "$CONTAINER" cat "${STATE_DIR}/sim_used.json" 2>/dev/null)"; then
+  :
+fi
+
 docker cp "${SRC}/." "${CONTAINER}:${DEST}/"
-echo "Synced ${SRC} -> ${CONTAINER}:${DEST}"
+
+if [[ -n "${HKID_USED_BACKUP}" ]]; then
+  echo "${HKID_USED_BACKUP}" | docker exec -i "$CONTAINER" tee "${STATE_DIR}/hkid_used.json" >/dev/null
+fi
+if [[ -n "${SIM_USED_BACKUP}" ]]; then
+  echo "${SIM_USED_BACKUP}" | docker exec -i "$CONTAINER" tee "${STATE_DIR}/sim_used.json" >/dev/null
+fi
+
+echo "Synced ${SRC} -> ${CONTAINER}:${DEST} (preserved .state/hkid_used.json + sim_used.json)"

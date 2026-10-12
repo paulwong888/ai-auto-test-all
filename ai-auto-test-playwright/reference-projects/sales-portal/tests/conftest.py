@@ -135,9 +135,8 @@ def _ensure_portal_session(
     _sso_login(context, page, save_auth=save_auth)
 
 
-@pytest.fixture()
-def logged_in_page(context: BrowserContext):
-    """每次用例新建 context（走 pytest-playwright `context`，与 `--video` / trace 一致）。"""
+def _open_logged_in_page(context: BrowserContext) -> Page:
+    """新建页、登录并清理 pending 购物车/草稿（默认 POS 见 SALES_PORTAL_POS_ACCOUNT）。"""
     page = context.new_page()
     page.goto(BASE_URL, wait_until="domcontentloaded", timeout=120_000)
     _ensure_portal_session(context, page, save_auth=False)
@@ -153,5 +152,23 @@ def logged_in_page(context: BrowserContext):
     if cart_amount_looks_stale(page) or deposit_cart_mismatch_visible(page):
         clear_stale_5g_bb_draft(page, BASE_URL)
     resolve_deposit_cart_mismatch(page, BASE_URL)
+    return page
+
+
+@pytest.fixture()
+def logged_in_page(context: BrowserContext):
+    """每次用例新建 context（走 pytest-playwright `context`，与 `--video` / trace 一致）。"""
+    page = _open_logged_in_page(context)
+    yield page
+    page.close()
+
+
+@pytest.fixture()
+def logged_in_page_sdir(context: BrowserContext, monkeypatch: pytest.MonkeyPatch):
+    """登录并选择 CRM-PAULHP-SDIR（Direct Sale + Online Payment）。"""
+    from data.account_factory import POS_ACCOUNT_DIRECT_SALES
+
+    monkeypatch.setenv("SALES_PORTAL_POS_ACCOUNT", POS_ACCOUNT_DIRECT_SALES)
+    page = _open_logged_in_page(context)
     yield page
     page.close()

@@ -91,6 +91,7 @@ export function RunPage() {
   const [vncFullscreen, setVncFullscreen] = useState(false);
   const [pipelineRuns, setPipelineRuns] = useState<PipelineRunRecord[]>([]);
   const [pipelineBusy, setPipelineBusy] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
 
   const loadRuns = useCallback(async () => {
     if (!id) return;
@@ -132,6 +133,23 @@ export function RunPage() {
 
   const activeDbRun = runs.find((r) => r.status === "running");
   const liveRunning = running || !!activeDbRun;
+  const currentRunId = liveRunId ?? activeDbRun?.id ?? null;
+
+  const cancelCurrentRun = async () => {
+    if (!id || !currentRunId) return;
+    setCancelBusy(true);
+    setError(null);
+    try {
+      await fetchJson<RunRecord>(`/api/projects/${id}/runs/${currentRunId}/cancel`, {
+        method: "POST",
+      });
+      await loadRuns();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "取消失败");
+    } finally {
+      setCancelBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!activeDbRun || running) return;
@@ -348,7 +366,7 @@ export function RunPage() {
           </div>
         )}
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 items-center">
           <button
             type="button"
             onClick={() => void runWithPreset()}
@@ -357,6 +375,16 @@ export function RunPage() {
           >
             {busy || liveRunning ? "运行中…" : "开始运行"}
           </button>
+          {liveRunning && currentRunId && (
+            <button
+              type="button"
+              onClick={() => void cancelCurrentRun()}
+              disabled={cancelBusy}
+              className="px-4 py-2 rounded bg-red-700 hover:bg-red-600 text-sm disabled:opacity-50"
+            >
+              {cancelBusy ? "取消中…" : "取消当前 Run"}
+            </button>
+          )}
           {lastFailed && (
             <button
               type="button"
@@ -489,6 +517,12 @@ export function RunPage() {
             />
           </div>
         </div>
+      )}
+
+      {liveRunning && currentRunId && (
+        <p className="text-xs text-slate-500 font-mono">
+          当前 Run：<span className="text-slate-300">{currentRunId}</span>
+        </p>
       )}
 
       <LiveTerminal logs={logs} running={liveRunning} pulseAt={pulseAt} runStartedAt={runStartedAt} />

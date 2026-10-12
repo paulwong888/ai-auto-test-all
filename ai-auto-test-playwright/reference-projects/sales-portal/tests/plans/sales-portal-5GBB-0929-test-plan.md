@@ -61,6 +61,7 @@
 ### 阶段 G2 — PAYMENT（`app-new-payment`）
 29a. **Cashier**（默认）：`inputId="Cashier"` → COMPLETE 步 **不** 弹网关 → SIT 调 **topupMultipleWallet**（`PAYMENT_TRANSACTION_ID` + 当前金额）→ **Check Payment Status** → **Back to index**
 29b. **Online Payment**：`inputId="OnlinePayment"` → COMPLETE 步 Step8 `ngOnInit` **自动** `window.open` 网关（`expect_popup`）
+29c. **Direct Sale Payment**：`inputId="DirectSales"`（POS `CRM-PAULHP-SDIR`）→ COMPLETE 步点 **Direct Sale Payment** → **Confirm Payment**（无网关、无 topupMultipleWallet）→ **Check Payment Status** → **Back to index**
 30. 点击 `.pi.pi-chevron-right` 进入 COMPLETE 步
 
 ### 阶段 H — 支付网关弹窗（paygwuat.hthk.com）★本模块新增
@@ -83,7 +84,7 @@
 
 | 文件 | Page Object 类 | 状态 | 职责 / 关键元素 |
 |------|---------------|------|-----------------|
-| `pages/payment_method_page.py` | `PaymentMethodPage` | **新增** | PAYMENT 步；`Cashier` / `OnlinePayment` radio；`pick_cashier()`、`pick_online_payment()` |
+| `pages/payment_method_page.py` | `PaymentMethodPage` | **新增** | PAYMENT 步；`Cashier` / `OnlinePayment` / `DirectSales` radio；`pick_cashier()`、`pick_online_payment()`、`pick_direct_sale_payment()` |
 | `pages/step8_complete_page.py` | `Step8CompletePage` | **新增** | COMPLETE 步；`wait_for_payment_popup()` / `retry_payment_popup()` |
 | `pages/gateway_payment_page.py` | `GatewayPaymentPage` | **新增** | 支付网关弹窗页（`paygwuat.hthk.com`）；定位器：`付款` 按钮、`名字 *`/`姓氏 *` 文本框、`Visa` radio、`信用卡號碼 *`、`到期月份 *`/`到期年份 *` 下拉（select_option）、`CVN *`；方法 `fill_payer()`、`fill_card()`、`submit_pay()` |
 | `pages/payment_result_page.py` | `PaymentResultPage` | **新增** | 门户侧支付结果区；定位器：**Check Payment Status** 按钮、状态 overlay（`.cdk-overlay-backdrop` 关闭）、**Back to index** 按钮；方法 `check_payment_status()`、`close_status_overlay()`、`back_to_index()` |
@@ -149,6 +150,7 @@
 | TC-026 | `test_tc026_gateway_declined_card` | 网关页提交被拒卡号/CVN 错误 | 网关报错提示、不进入 SUCCESS（负向，视网关沙箱支持，见待确认项 3） |
 | TC-100 | `test_tc100_5gbb_online_payment` | **串联 smoke（在线）**：…→SIM→Online Payment→网关→Check Payment Status→Back to index | 全链路无致命错误 |
 | TC-100 | `test_tc100_5gbb_cash_payment` | **串联 smoke（Cashier）**：…→SIM→Cashier→Step8 轮询 Check Payment Status→Back to index | 无网关 popup；订单成功文案 |
+| TC-100 | `test_tc100_5gbb_direct_sale_payment` | **串联 smoke（Direct Sale）**：POS SDIR→…→SIM→Direct Sales→Step8 Confirm Payment→Check Payment Status→Back to index | 无网关 popup；无 topup API |
 
 > 实施粒度建议（沿上模块决策 §6.8）：首版仅实现 **TC-100 串联 smoke**（步骤注释引用 TC-005–TC-023）；TC-001–TC-003 浏览段可复用 `sales-portal` spec 不重复实现；TC-024–TC-026 负向用例作为后续拆分。最终以人工确认为准（待确认项 10）。
 

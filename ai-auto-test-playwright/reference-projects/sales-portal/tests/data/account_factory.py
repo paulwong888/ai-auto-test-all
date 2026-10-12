@@ -6,6 +6,7 @@
   - SALES_PORTAL_PASSWORD
   - SALES_PORTAL_WRONG_PASSWORD（TC002 错误密码；缺省时用派生错误密码）
   - SALES_PORTAL_POS_ACCOUNT（Choose user account 页 POS，默认 CRM-PAULHP-01）
+  - SALES_PORTAL_SECOND_AGENT（Direct Sales 部门必填 Second Agent，默认 Test Agent）
 """
 import os
 
@@ -29,3 +30,7 @@ def get_wrong_password() -> str:
 
 def get_pos_account() -> str:
     return os.getenv("SALES_PORTAL_POS_ACCOUNT", POS_ACCOUNT_CASHIER).strip()
+
+
+def get_second_agent_name() -> str:
+    return os.getenv("SALES_PORTAL_SECOND_AGENT", "Test Agent").strip()

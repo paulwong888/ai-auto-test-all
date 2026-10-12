@@ -1,4 +1,4 @@
-"""PAYMENT 步（app-new-payment）— 选择支付方式（Cashier / Online Payment）。"""
+"""PAYMENT 步（app-new-payment）— Cashier / Online Payment / Direct Sale Payment。"""
 import re
 
 from playwright.sync_api import Page, expect
@@ -8,6 +8,7 @@ from pages.overlay_helpers import dismiss_shop_cart_drawer
 PAYMENT_STEP_RE = re.compile(r"Payment Method|Primary Sim Mobile Number", re.I)
 ONLINE_PAYMENT_RE = re.compile(r"Online Payment|在线支付", re.I)
 CASHIER_RE = re.compile(r"Cashier|cashier|收银", re.I)
+DIRECT_SALE_RE = re.compile(r"Direct Sale Payment|Direct Sales|直销", re.I)
 
 
 class PaymentMethodPage:
@@ -48,3 +49,7 @@ class PaymentMethodPage:
     def pick_online_payment(self) -> None:
         """对齐 new-payment.component.html：p-radioButton inputId='OnlinePayment'。"""
         self._pick_radio("OnlinePayment", ONLINE_PAYMENT_RE)
+
+    def pick_direct_sale_payment(self) -> None:
+        """SalesPortalPaymentMethod.DirectSales → inputId='DirectSales'（paymentInfo.directSalesPayment）。"""
+        self._pick_radio("DirectSales", DIRECT_SALE_RE)

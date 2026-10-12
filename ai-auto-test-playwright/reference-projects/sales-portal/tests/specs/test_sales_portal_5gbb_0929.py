@@ -277,3 +277,24 @@ class TestSalesPortal5GBB0929:
 
         expect(page.locator("app-new-header")).to_be_visible(timeout=30_000)
         self._mark_pool_usage(kyc, sim)
+
+    @pytest.mark.smoke
+    def test_tc100_5gbb_direct_sale_payment(self, logged_in_page_sdir: Page) -> None:
+        page = logged_in_page_sdir
+        self._reach_offer(ProductListingPage(page))
+        OrderApplicationPage(page).fill_second_agent_if_required()
+        order, kyc, sim = self._wizard_through_sim_with_hkid_retry(page)
+
+        order.next_step()
+        pm = PaymentMethodPage(page)
+        pm.expect_on_step()
+        pm.pick_direct_sale_payment()
+        order.next_step()
+        self._assert_no_gateway_popup(page)
+
+        step8 = Step8CompletePage(page)
+        step8.complete_direct_sale_via_status_check()
+        PaymentResultPage(page).back_to_index()
+
+        expect(page.locator("app-new-header")).to_be_visible(timeout=30_000)
+        self._mark_pool_usage(kyc, sim)

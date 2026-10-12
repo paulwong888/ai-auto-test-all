@@ -13,7 +13,7 @@ from data.sim_factory import (
     mark_sim_attempt_failed,
     should_track_sim_usage,
 )
-from pages.overlay_helpers import dismiss_shop_cart_drawer
+from pages.overlay_helpers import dismiss_shop_cart_drawer, complete_otp_if_present
 from pages.signature_dialog import INLINE_STROKE_RATIOS, stroke_canvas
 
 TERMS_PATTERN = re.compile(r"I have read and agree", re.I)
@@ -226,14 +226,35 @@ class SimServicePage:
             icon.click()
             self.page.wait_for_timeout(400)
 
+    def _dismiss_sim_blocking_dialogs(self) -> None:
+        """ICCID blur 校验失败时 Portal 常弹 p-dialog / toast，先关掉以免挡输入。"""
+        complete_otp_if_present(self.page)
+        for _ in range(3):
+            dialog = self.page.get_by_role("dialog").filter(
+                has_text=re.compile(r"ICCID|serial|SIM|inventory|error|fail", re.I)
+            )
+            if dialog.count() == 0 or not dialog.first.is_visible():
+                break
+            for label in ("OK", "Close", "Confirm", "確定"):
+                btn = dialog.first.get_by_role("button", name=re.compile(label, re.I))
+                if btn.count() > 0 and btn.first.is_visible():
+                    btn.first.click(force=True)
+                    self.page.wait_for_timeout(400)
+                    break
+            else:
+                self.page.keyboard.press("Escape")
+            self.page.wait_for_timeout(300)
+
     def _fill_iccid_only(self, iccid: Locator, iccid_val: str) -> None:
         """5G BB 主模块：单 ICCID 字段，blur 触发库存校验（new-select-sim updateOn: blur）。"""
+        self._dismiss_sim_blocking_dialogs()
         iccid.click()
         iccid.fill("")
         iccid.fill(iccid_val)
         iccid.press("Tab")
         self.page.wait_for_load_state("networkidle")
         self._wait_sim_step_idle(timeout_ms=60_000)
+        self._dismiss_sim_blocking_dialogs()
         if self._iccid_error_visible():
             print(f"[sim_service] ICCID inventory error after fill: {iccid_val!r}")
 

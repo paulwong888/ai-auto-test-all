@@ -85,6 +85,27 @@ export function createRunRouter(
     }
   });
 
+  router.post(
+    "/runs/:runId/cancel",
+    requireProjectRole("owner", "editor", "ci_bot"),
+    async (req: AuthedRequest, res) => {
+      try {
+        const pid = projectId(req);
+        const runId = paramString(req.params.runId);
+        const run = await runService.cancelProjectRun(pid, runId);
+        await auditService.log({
+          projectId: pid,
+          userId: req.userId ?? null,
+          action: "run.cancel",
+          resource: runId,
+        });
+        res.json({ ok: true, data: run });
+      } catch (err) {
+        sendError(res, err);
+      }
+    },
+  );
+
   router.get("/runs/:runId", requireProjectRole("owner", "editor", "viewer", "ci_bot"), async (req, res) => {
     try {
       const authed = req as AuthedRequest;

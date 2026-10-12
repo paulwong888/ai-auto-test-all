@@ -31,18 +31,31 @@ INLINE_STROKE_RATIOS: list[tuple[float, float]] = [
 
 
 def expand_consent_signature_section(page: Page) -> None:
-    """展开 Customer Consent Signature 手风琴，确保页内 canvas 可见。"""
-    for pattern in (r"Customer Consent Signature", r"Customer Consent"):
+    """展开 Customer Consent / Remarks 手风琴，滚到 Please sign here，确保 canvas 可见。"""
+    for pattern in (
+        r"Customer Consent Signature",
+        r"Customer Consent",
+        r"Remarks",
+    ):
         consent = page.get_by_role("button", name=re.compile(pattern, re.I))
-        if consent.count() > 0:
+        for i in range(consent.count()):
+            tab = consent.nth(i)
             try:
-                if consent.first.get_attribute("aria-expanded") == "false":
-                    consent.first.click()
+                if not tab.is_visible():
+                    continue
+                if tab.get_attribute("aria-expanded") == "false":
+                    tab.scroll_into_view_if_needed()
+                    tab.click()
                     page.wait_for_timeout(400)
             except Exception:
-                consent.first.click(force=True)
+                tab.click(force=True)
                 page.wait_for_timeout(400)
-            break
+    sign_here = page.get_by_text(re.compile(r"Please sign here", re.I))
+    if sign_here.count() > 0:
+        try:
+            sign_here.first.scroll_into_view_if_needed()
+        except Exception:
+            pass
     page.wait_for_timeout(200)
 
 
@@ -88,18 +101,36 @@ def _consent_canvas_locators(page: Page) -> list[Locator]:
     """Consent 区 canvas（限定 Please sign here 容器，避免误用信用卡 pad）。"""
     expand_consent_signature_section(page)
     root = _please_sign_here_root(page)
-    if root.count() == 0:
-        return []
     found: list[Locator] = []
-    for sel in (
-        "crm-common-signature-pad canvas.canvas-container:visible",
-        "crm-common-signature-pad canvas:visible",
-        "canvas:visible",
-    ):
-        loc = root.locator(sel)
-        if loc.count() > 0:
-            found.append(loc.first)
-            break
+    scopes: list[Locator] = []
+    if root.count() > 0:
+        scopes.append(root)
+    scopes.append(page.locator(".flex-body"))
+    for scope in scopes:
+        for sel in (
+            "crm-common-signature-pad canvas.canvas-container",
+            "crm-common-signature-pad canvas",
+            "canvas",
+        ):
+            loc = scope.locator(sel)
+            for i in range(loc.count()):
+                canvas = loc.nth(i)
+                try:
+                    canvas.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                found.append(canvas)
+                return found
+    pads = page.locator(".flex-body crm-common-signature-pad")
+    for i in range(pads.count()):
+        pad = pads.nth(i)
+        canvas = pad.locator("canvas").first
+        if canvas.count() > 0:
+            try:
+                canvas.scroll_into_view_if_needed()
+            except Exception:
+                pass
+            return [canvas]
     return found
 
 
@@ -482,7 +513,7 @@ def _sign_one_consent_canvas(page: Page, canvas: Locator) -> bool:
 
 
 def sign_consent_signature(page: Page) -> None:
-    """页内 Customer Consent / Please sign here 签名（ICCID 前；不上下滚动）。"""
+    """页内 Customer Consent / Please sign here 签名（ICCID 前）。"""
     expand_consent_signature_section(page)
     if _please_sign_here_valid(page):
         return
@@ -495,6 +526,16 @@ def sign_consent_signature(page: Page) -> None:
 
     canvases = _consent_canvas_locators(page)
     if not canvases:
+        fallback = inline_signature_canvas(page)
+        if fallback.count() > 0:
+            try:
+                fallback.scroll_into_view_if_needed()
+                canvases = [fallback]
+            except Exception:
+                canvases = [fallback]
+    if not canvases:
+        if _please_sign_here_valid(page):
+            return
         raise AssertionError(
             "Customer Consent 签名区 canvas 不可见（无法进入 SIM 步）"
         )

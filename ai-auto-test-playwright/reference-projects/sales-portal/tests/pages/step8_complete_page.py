@@ -18,8 +18,13 @@ from pages.payment_result_page import PaymentResultPage
 from helpers.cashier_sit_topup import apply_sit_cashier_topup
 
 WAITING_PAYMENT_RE = re.compile(r"Waiting for payment done", re.I)
+WAITING_DIRECT_SALE_RE = re.compile(
+    r"Please confirm direct sale payment|confirm direct sale payment", re.I
+)
 PRIMARY_SIM_RE = re.compile(r"Primary Sim Mobile Number", re.I)
 CHECK_STATUS_RE = re.compile(r"Check Payment Status", re.I)
+DIRECT_SALE_PAYMENT_BTN_RE = re.compile(r"Direct Sale Payment", re.I)
+CONFIRM_PAYMENT_RE = re.compile(r"Confirm Payment", re.I)
 # environment.ogp-sit.ts
 ONLINE_PAYMENT_BASE = "https://wwwuat.three.com.hk/DT/postpaid/dev3/tc/checkout/transaction"
 PAYMENT_POPUP_TIMEOUT_MS = 25_000
@@ -44,19 +49,15 @@ class Step8CompletePage:
         """Cashier Step8：无网关 popup，等待门店收银 + Check Payment Status。"""
         self.expect_waiting_payment()
 
-    def complete_cashier_via_status_check(
+    def _poll_until_order_placed(
         self,
+        *,
         max_attempts: int = 12,
         interval_ms: int = 5_000,
-        *,
-        sit_topup: bool = True,
+        failure_hint: str,
     ) -> None:
-        """轮询 Check Payment Status 直至 completeDraftOrder 成功（Back to index 可见）。"""
         result = PaymentResultPage(self.page)
-        self.expect_cashier_waiting()
-        if sit_topup:
-            apply_sit_cashier_topup(self.page)
-        for attempt in range(max_attempts):
+        for _ in range(max_attempts):
             if result.is_order_placed_success():
                 return
             check = self.page.get_by_role("button", name=CHECK_STATUS_RE)
@@ -71,9 +72,61 @@ class Step8CompletePage:
                 except Exception:
                     pass
             self.page.wait_for_timeout(interval_ms)
-        raise AssertionError(
-            f"Cashier 支付在 Step8 轮询 {max_attempts} 次仍未完成；"
-            "请确认 SIT 门店收银已销账或 payment_transaction 已付。"
+        raise AssertionError(failure_hint)
+
+    def complete_cashier_via_status_check(
+        self,
+        max_attempts: int = 12,
+        interval_ms: int = 5_000,
+        *,
+        sit_topup: bool = True,
+    ) -> None:
+        """轮询 Check Payment Status 直至 completeDraftOrder 成功（Back to index 可见）。"""
+        self.expect_cashier_waiting()
+        if sit_topup:
+            apply_sit_cashier_topup(self.page)
+        self._poll_until_order_placed(
+            max_attempts=max_attempts,
+            interval_ms=interval_ms,
+            failure_hint=(
+                f"Cashier 支付在 Step8 轮询 {max_attempts} 次仍未完成；"
+                "请确认 SIT 门店收银已销账或 payment_transaction 已付。"
+            ),
+        )
+
+    def confirm_direct_sale_payment(self) -> None:
+        """Step8：点 Direct Sale Payment → Confirm Payment（createDirectSalesPayment）。"""
+        dismiss_shop_cart_drawer(self.page)
+        body = self.page.locator(".flex-body")
+        expect(body.get_by_text(PRIMARY_SIM_RE).first).to_be_visible(timeout=60_000)
+        waiting = body.get_by_text(WAITING_DIRECT_SALE_RE)
+        if waiting.count() > 0:
+            expect(waiting.first).to_be_visible(timeout=30_000)
+        create_btn = self.page.get_by_role("button", name=DIRECT_SALE_PAYMENT_BTN_RE)
+        expect(create_btn.first).to_be_visible(timeout=60_000)
+        create_btn.first.click(force=True)
+        confirm = self.page.get_by_role("button", name=CONFIRM_PAYMENT_RE)
+        expect(confirm.first).to_be_visible(timeout=30_000)
+        confirm.first.click(force=True)
+        PaymentResultPage(self.page)._wait_loading_gone(timeout_ms=120_000)
+
+    def complete_direct_sale_via_status_check(
+        self,
+        max_attempts: int = 12,
+        interval_ms: int = 5_000,
+    ) -> None:
+        """Direct Sale：确认支付后轮询 Check Payment Status（无 topupMultipleWallet）。"""
+        self.confirm_direct_sale_payment()
+        result = PaymentResultPage(self.page)
+        if result.is_order_placed_success():
+            return
+        self._poll_until_order_placed(
+            max_attempts=max_attempts,
+            interval_ms=interval_ms,
+            failure_hint=(
+                f"Direct Sale 支付在 Step8 轮询 {max_attempts} 次仍未完成；"
+                "请确认 SIT directSalesPayment 已创建或清 pending draft 后重试。"
+            ),
         )
 
     def wait_for_payment_popup(self, on_trigger: Callable[[], None]) -> Page:

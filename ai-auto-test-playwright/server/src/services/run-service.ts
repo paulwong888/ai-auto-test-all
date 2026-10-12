@@ -263,13 +263,27 @@ export class RunService {
     return run;
   }
 
+  /** @deprecated Prefer cancelProjectRun(projectId, runId) */
   async cancelRun(runId: string): Promise<boolean> {
-    const active = [...this.activeRunsByProject.values()].find((r) => r.runId === runId);
-    if (!active) {
+    const run = await this.runs.findById(runId);
+    if (!run) {
       return false;
     }
-    this.cancelled = true;
-    this.abortController?.abort();
+    const updated = await this.cancelProjectRun(run.projectId, runId);
+    return updated.status === "cancelled";
+  }
+
+  async cancelProjectRun(projectId: string, runId: string): Promise<RunRecord> {
+    const run = await this.getRun(projectId, runId);
+    if (!run) {
+      throw new AppError("RUN_NOT_FOUND", "Run not found", 404);
+    }
+    if (run.status !== "running" && run.status !== "pending") {
+      return run;
+    }
+
+    const active = this.activeRunsByProject.get(projectId);
+    const ownsStream = active?.runId === runId;
 
     try {
       await fetch(`${this.config.workerUrl}/internal/cancel`, {
@@ -279,10 +293,30 @@ export class RunService {
         signal: AbortSignal.timeout(5000),
       });
     } catch {
-      // ignore worker cancel errors
+      // worker may already be idle; still finalize below if needed
     }
 
-    return true;
+    if (ownsStream) {
+      this.cancelled = true;
+      this.abortController?.abort();
+      const latest = await this.getRun(projectId, runId);
+      return latest ?? run;
+    }
+
+    await this.finalizeRun(run, {
+      status: "cancelled",
+      passed: 0,
+      failed: 0,
+      skipped: 0,
+      durationMs: null,
+      error: "Cancelled by user",
+      logLines: [],
+    });
+    const updated = await this.getRun(projectId, runId);
+    if (!updated) {
+      throw new AppError("RUN_NOT_FOUND", "Run not found after cancel", 404);
+    }
+    return updated;
   }
 
   async getRun(projectId: string, runId: string): Promise<RunRecord | null> {
@@ -606,7 +640,7 @@ export class RunService {
 
     await this.workflowStates.update(run.projectId, {
       stage: "run",
-      stageStatus: status === "passed" ? "idle" : "failed",
+      stageStatus: status === "passed" || status === "cancelled" ? "idle" : "failed",
     });
 
     const project = await this.projectService.getById(run.projectId);

@@ -14,14 +14,23 @@ export function ReportPage() {
   const [fix, setFix] = useState<FixSuggestion | null>(null);
   const [videos, setVideos] = useState<{ path: string; label: string }[]>([]);
   const [videosLoaded, setVideosLoaded] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const loadRun = async () => {
+    if (!id || !runId) return;
+    const r = await fetchJson<RunRecord>(`/api/projects/${id}/runs/${runId}`);
+    setRun(r);
+    return r;
+  };
 
   useEffect(() => {
     if (!id || !runId) return;
     setVideos([]);
     setVideosLoaded(false);
-    void fetchJson<RunRecord>(`/api/projects/${id}/runs/${runId}`)
+    void loadRun()
       .then((r) => {
-        setRun(r);
+        if (!r) return;
         if (r.options?.recordVideo === true) {
           void fetchJson<{ videos: { path: string; label: string }[] }>(
             `/api/projects/${id}/runs/${runId}/videos`,
@@ -38,6 +47,30 @@ export function ReportPage() {
       .then(setFix)
       .catch(() => setFix(null));
   }, [id, runId]);
+
+  useEffect(() => {
+    if (!id || !runId || run?.status !== "running") return;
+    const t = window.setInterval(() => {
+      void loadRun().catch(() => undefined);
+    }, 3000);
+    return () => window.clearInterval(t);
+  }, [id, runId, run?.status]);
+
+  const cancelRun = async () => {
+    if (!id || !runId) return;
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      const updated = await fetchJson<RunRecord>(`/api/projects/${id}/runs/${runId}/cancel`, {
+        method: "POST",
+      });
+      setRun(updated);
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : "取消失败");
+    } finally {
+      setCancelBusy(false);
+    }
+  };
 
   const analyzeFix = async () => {
     if (!id || !runId) return;
@@ -72,11 +105,26 @@ export function ReportPage() {
           <h1 className="font-medium mt-1">测试报告</h1>
           {run && (
             <p className="text-xs text-slate-500 font-mono">
-              {runId} · {run.passed}P / {run.failed}F
+              {runId} · {run.status} · {run.passed}P / {run.failed}F
             </p>
           )}
+          {cancelError && <p className="text-xs text-red-400 mt-1">{cancelError}</p>}
         </div>
+        {run?.status === "running" && (
+          <button
+            type="button"
+            onClick={() => void cancelRun()}
+            disabled={cancelBusy}
+            className="px-4 py-2 rounded bg-red-700 hover:bg-red-600 text-sm disabled:opacity-50"
+          >
+            {cancelBusy ? "取消中…" : "取消当前 Run"}
+          </button>
+        )}
       </div>
+
+      {run?.status === "running" && (
+        <p className="px-6 text-sm text-amber-400/90">Run 仍在执行，报告可能不完整；可取消或稍后刷新。</p>
+      )}
 
       <iframe
         key={runId}
