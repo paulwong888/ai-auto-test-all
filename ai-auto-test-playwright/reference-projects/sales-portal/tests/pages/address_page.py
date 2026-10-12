@@ -1,4 +1,4 @@
-"""Billing Address（5G BB SIT）+ 录制 fallback（sales-portal-order.py L28-40）。"""
+"""Billing Address（5G BB SIT）+ 旧版 DOM fallback。"""
 import re
 
 from playwright.sync_api import Locator, Page, expect
@@ -99,7 +99,7 @@ class AddressPage:
         self._fill_address_legacy_nth(field_set_index=0)
 
     def _fill_address_legacy_nth(self, field_set_index: int = 0) -> None:
-        """录制 sales-portal-order.py L28-38（旧版 undefined 联想）。"""
+        """旧版 undefined 联想字段 fallback。"""
         flat = get_flat()
         textboxes = self.page.locator('input[type="text"]')
         for base in (3, 4, 5):

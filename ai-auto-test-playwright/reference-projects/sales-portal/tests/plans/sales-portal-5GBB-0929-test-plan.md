@@ -7,8 +7,8 @@
 
 > 本计划与既有模块的关系：
 > - **登录 + 浏览选套餐** 复用 `sales-portal` 模块 POM（`SsoLoginPage`/`HomePage`/`ProductListingPage`）。
-> - **申请向导（KYC/地址/信用卡/SIM）** 复用 `sales-portal-order` 模块 POM（`OrderApplicationPage`/`KycPage`/`AddressPage`/`PaymentPage`/`SimServicePage`/`SignatureDialog`）。
-> - **新增差异点**：本次录制比 `sales-portal-order` 多出 **在线支付网关弹窗（paygwuat.hthk.com）→ 支付成功回跳 → Check Payment Status → Back to index** 一整段，是本模块的核心新增覆盖。
+> - **申请向导（KYC/地址/信用卡/SIM）** 复用共享 POM（`OrderApplicationPage`/`KycPage`/`AddressPage`/`PaymentPage`/`SimServicePage`/`SignatureDialog`）。
+> - **核心覆盖**：**在线支付网关弹窗（paygwuat.hthk.com）→ 支付成功回跳 → Check Payment Status → Back to index**。
 
 ---
 
@@ -59,8 +59,9 @@
 28. 点击 `.pi.pi-chevron-right` 进入 PAYMENT 步
 
 ### 阶段 G2 — PAYMENT（`app-new-payment`）
-29. 选择 **Online Payment**（`p-radioButton` `inputId="OnlinePayment"`）
-30. 点击 `.pi.pi-chevron-right` 进入 COMPLETE 步；Step8 `ngOnInit` **自动** `window.open` 网关（`expect_popup`）
+29a. **Cashier**（默认）：`inputId="Cashier"` → COMPLETE 步 **不** 弹网关 → SIT 调 **topupMultipleWallet**（`PAYMENT_TRANSACTION_ID` + 当前金额）→ **Check Payment Status** → **Back to index**
+29b. **Online Payment**：`inputId="OnlinePayment"` → COMPLETE 步 Step8 `ngOnInit` **自动** `window.open` 网关（`expect_popup`）
+30. 点击 `.pi.pi-chevron-right` 进入 COMPLETE 步
 
 ### 阶段 H — 支付网关弹窗（paygwuat.hthk.com）★本模块新增
 32. 新页面（page1）点击 `.d-flex.py-4` 首个区块，点击 **付款** 按钮
@@ -82,7 +83,7 @@
 
 | 文件 | Page Object 类 | 状态 | 职责 / 关键元素 |
 |------|---------------|------|-----------------|
-| `pages/payment_method_page.py` | `PaymentMethodPage` | **新增** | PAYMENT 步；`OnlinePayment` radio；方法 `expect_on_step()`、`pick_online_payment()` |
+| `pages/payment_method_page.py` | `PaymentMethodPage` | **新增** | PAYMENT 步；`Cashier` / `OnlinePayment` radio；`pick_cashier()`、`pick_online_payment()` |
 | `pages/step8_complete_page.py` | `Step8CompletePage` | **新增** | COMPLETE 步；`wait_for_payment_popup()` / `retry_payment_popup()` |
 | `pages/gateway_payment_page.py` | `GatewayPaymentPage` | **新增** | 支付网关弹窗页（`paygwuat.hthk.com`）；定位器：`付款` 按钮、`名字 *`/`姓氏 *` 文本框、`Visa` radio、`信用卡號碼 *`、`到期月份 *`/`到期年份 *` 下拉（select_option）、`CVN *`；方法 `fill_payer()`、`fill_card()`、`submit_pay()` |
 | `pages/payment_result_page.py` | `PaymentResultPage` | **新增** | 门户侧支付结果区；定位器：**Check Payment Status** 按钮、状态 overlay（`.cdk-overlay-backdrop` 关闭）、**Back to index** 按钮；方法 `check_payment_status()`、`close_status_overlay()`、`back_to_index()` |
@@ -116,7 +117,7 @@
 
 > 规格文件：`specs/test_sales_portal_5gbb_0929.py`，类名 `TestSalesPortal5GBB0929`。
 > TC-001 用完整 SSO；TC-002 起复用 `logged_in_page`（auth.json）。
-> 沿用项目惯例：**TC-100 为串联 smoke**（对齐 `sales-portal-order` 的 `test_tc100_full_order_application`）。
+> 沿用项目惯例：**TC-100 为串联 smoke**（`test_tc100_5gbb_online_payment`）。
 
 | TC 编号 | 方法名 | 描述 | 主要断言 |
 |---------|--------|------|---------|
@@ -146,7 +147,8 @@
 | TC-024 | `test_tc024_block_required_validation` | 不填 Block 直接下一步 → 触发 "At least one of…" 校验 | 校验提示可见（负向/边界，录制中有该提示痕迹） |
 | TC-025 | `test_tc025_invalid_mobile_format` | Contact Mobile 填非法格式（>8 位/含字母） | 格式校验错误提示（等价类/边界） |
 | TC-026 | `test_tc026_gateway_declined_card` | 网关页提交被拒卡号/CVN 错误 | 网关报错提示、不进入 SUCCESS（负向，视网关沙箱支持，见待确认项 3） |
-| TC-100 | `test_tc100_full_5gbb_online_payment` | **串联 smoke**：登录→选套餐→KYC→地址→卡→SIM→网关付款→Check Payment Status→Back to index | 全链路无致命错误；支付状态成功文案；对齐 TC-100 惯例 |
+| TC-100 | `test_tc100_5gbb_online_payment` | **串联 smoke（在线）**：…→SIM→Online Payment→网关→Check Payment Status→Back to index | 全链路无致命错误 |
+| TC-100 | `test_tc100_5gbb_cash_payment` | **串联 smoke（Cashier）**：…→SIM→Cashier→Step8 轮询 Check Payment Status→Back to index | 无网关 popup；订单成功文案 |
 
 > 实施粒度建议（沿上模块决策 §6.8）：首版仅实现 **TC-100 串联 smoke**（步骤注释引用 TC-005–TC-023）；TC-001–TC-003 浏览段可复用 `sales-portal` spec 不重复实现；TC-024–TC-026 负向用例作为后续拆分。最终以人工确认为准（待确认项 10）。
 
@@ -189,7 +191,7 @@
 ## 说明
 
 - 本计划为 **`sales-portal-5GBB-0929`** 模块权威描述；**§5 待确认项确认后** 方可生成 `specs/test_sales_portal_5gbb_0929.py` 及新增 POM（`gateway_payment_page.py`、`payment_result_page.py`）/data 扩展。
-- 生成代码 **不得修改** `tests/recorded/sales-portal-5GBB-0929.py`，也 **不改动** 既有 `sales-portal` / `sales-portal-order` 模块的 spec 与 POM（复用优先，确需扩展时以新增方法/传参实现）。
+- 生成代码 **不得修改** `tests/recorded/sales-portal-5GBB-0929.py`，也 **不改动** 既有 `sales-portal` browse spec（复用优先，确需扩展时以新增方法/传参实现）。
 - 网关页为第三方域：如自动化受 3DS/风控拦截，按上模块决策 §6.7 处理（mock 或人工 mark），首版不硬刚。
 
 ---

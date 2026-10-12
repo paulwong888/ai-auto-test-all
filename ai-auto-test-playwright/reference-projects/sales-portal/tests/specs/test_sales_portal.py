@@ -19,8 +19,11 @@ class TestSalesPortal:
     def test_tc001_sso_login_success(self, page, base_url) -> None:
         """TC-001 正确账号密码登录，成功进入门户首页。"""
         page.goto(base_url, wait_until="networkidle")
+        from conftest import complete_portal_login
+
         sso = SsoLoginPage(page)
         sso.login()
+        complete_portal_login(page)
         home = HomePage(page)
         home.expect_header_visible()
         assert base_url in page.url

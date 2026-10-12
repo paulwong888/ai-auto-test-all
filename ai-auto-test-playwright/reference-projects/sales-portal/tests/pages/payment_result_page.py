@@ -9,6 +9,7 @@ CHECK_STATUS_RE = re.compile(r"Check Payment Status", re.I)
 BACK_INDEX_RE = re.compile(r"Back to index", re.I)
 WAITING_RE = re.compile(r"Please wait", re.I)
 SUCCESS_RE = re.compile(r"收款成功|payment.*success|successful|Success", re.I)
+ORDER_PLACED_RE = re.compile(r"Place an order successfully", re.I)
 
 
 class PaymentResultPage:
@@ -39,6 +40,18 @@ class PaymentResultPage:
 
     def _back_to_index_button(self):
         return self.page.get_by_role("button", name=BACK_INDEX_RE).first
+
+    def is_order_placed_success(self) -> bool:
+        body = self.page.locator("body").inner_text()
+        if ORDER_PLACED_RE.search(body):
+            return True
+        btn = self._back_to_index_button()
+        if btn.count() == 0:
+            return False
+        try:
+            return btn.is_visible()
+        except Exception:
+            return False
 
     def check_payment_status(self) -> None:
         dismiss_shop_cart_drawer(self.page)

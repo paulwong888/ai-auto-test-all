@@ -14,6 +14,8 @@ from pages.gateway_payment_page import (
 from pages.order_application_page import OrderApplicationPage
 from pages.overlay_helpers import dismiss_shop_cart_drawer
 from pages.payment_method_page import PaymentMethodPage
+from pages.payment_result_page import PaymentResultPage
+from helpers.cashier_sit_topup import apply_sit_cashier_topup
 
 WAITING_PAYMENT_RE = re.compile(r"Waiting for payment done", re.I)
 PRIMARY_SIM_RE = re.compile(r"Primary Sim Mobile Number", re.I)
@@ -37,6 +39,42 @@ class Step8CompletePage:
             expect(waiting.first).to_be_visible(timeout=30_000)
         else:
             expect(check_btn.first).to_be_visible(timeout=30_000)
+
+    def expect_cashier_waiting(self) -> None:
+        """Cashier Step8：无网关 popup，等待门店收银 + Check Payment Status。"""
+        self.expect_waiting_payment()
+
+    def complete_cashier_via_status_check(
+        self,
+        max_attempts: int = 12,
+        interval_ms: int = 5_000,
+        *,
+        sit_topup: bool = True,
+    ) -> None:
+        """轮询 Check Payment Status 直至 completeDraftOrder 成功（Back to index 可见）。"""
+        result = PaymentResultPage(self.page)
+        self.expect_cashier_waiting()
+        if sit_topup:
+            apply_sit_cashier_topup(self.page)
+        for attempt in range(max_attempts):
+            if result.is_order_placed_success():
+                return
+            check = self.page.get_by_role("button", name=CHECK_STATUS_RE)
+            if check.count() > 0:
+                try:
+                    if check.first.is_visible():
+                        check.first.click(force=True)
+                        result._wait_loading_gone(timeout_ms=120_000)
+                        self.page.wait_for_timeout(800)
+                        if result.is_order_placed_success():
+                            return
+                except Exception:
+                    pass
+            self.page.wait_for_timeout(interval_ms)
+        raise AssertionError(
+            f"Cashier 支付在 Step8 轮询 {max_attempts} 次仍未完成；"
+            "请确认 SIT 门店收银已销账或 payment_transaction 已付。"
+        )
 
     def wait_for_payment_popup(self, on_trigger: Callable[[], None]) -> Page:
         """Step8 ngOnInit 会在进入 COMPLETE 时自动 window.open 网关。"""

@@ -11,6 +11,9 @@ import { proxyRunVncHttp } from "./run-vnc-proxy.js";
 
 const projectId = projectIdFromRequest;
 
+/** Per-run artifacts live under tests/.runs/; express send defaults dotfiles:ignore. */
+const SEND_FILE_OPTS = { dotfiles: "allow" as const };
+
 export function createRunRouter(
   runService: RunService,
   auditService: AuditService,
@@ -42,6 +45,7 @@ export function createRunRouter(
           headed: req.body?.headed,
           slowmo: req.body?.slowmo,
           vncPreview: req.body?.vncPreview,
+          recordVideo: req.body?.recordVideo === true,
           specFilter: req.body?.specFilter ?? null,
           nodeIds: Array.isArray(req.body?.nodeIds) ? req.body.nodeIds : undefined,
           rerunFailedOnly: req.body?.rerunFailedOnly === true,
@@ -149,7 +153,7 @@ export function createRunRouter(
   router.get("/runs/:runId/report", async (req, res) => {
     try {
       const reportPath = await runService.getReportPath(projectId(req), req.params.runId!);
-      res.type("html").sendFile(reportPath);
+      res.type("html").sendFile(reportPath, SEND_FILE_OPTS);
     } catch (err) {
       sendError(res, err);
     }
@@ -162,7 +166,7 @@ export function createRunRouter(
         req.params.runId!,
         req.params.name!,
       );
-      res.type("application/zip").sendFile(tracePath);
+      res.type("application/zip").sendFile(tracePath, SEND_FILE_OPTS);
     } catch (err) {
       sendError(res, err);
     }
@@ -183,7 +187,41 @@ export function createRunRouter(
         req.params.runId!,
         relPath,
       );
-      res.type("application/zip").sendFile(tracePath);
+      res.type("application/zip").sendFile(tracePath, SEND_FILE_OPTS);
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  router.get(
+    "/runs/:runId/videos",
+    requireProjectRole("owner", "editor", "viewer", "ci_bot"),
+    async (req, res) => {
+      try {
+        const videos = await runService.listRunVideos(projectId(req), paramString(req.params.runId));
+        res.json({ ok: true, data: { videos } });
+      } catch (err) {
+        sendError(res, err);
+      }
+    },
+  );
+
+  router.get("/runs/:runId/videos/download", async (req, res) => {
+    try {
+      const relPath = typeof req.query.path === "string" ? req.query.path : "";
+      if (!relPath) {
+        res.status(422).json({
+          ok: false,
+          error: { code: "PATH_REQUIRED", message: "path query parameter is required" },
+        });
+        return;
+      }
+      const videoPath = await runService.getVideoPath(
+        projectId(req),
+        paramString(req.params.runId),
+        relPath,
+      );
+      res.type("video/webm").sendFile(videoPath, SEND_FILE_OPTS);
     } catch (err) {
       sendError(res, err);
     }

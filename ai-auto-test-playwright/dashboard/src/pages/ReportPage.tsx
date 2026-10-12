@@ -12,11 +12,27 @@ export function ReportPage() {
   const [fixLoading, setFixLoading] = useState(false);
   const [fixError, setFixError] = useState<string | null>(null);
   const [fix, setFix] = useState<FixSuggestion | null>(null);
+  const [videos, setVideos] = useState<{ path: string; label: string }[]>([]);
+  const [videosLoaded, setVideosLoaded] = useState(false);
 
   useEffect(() => {
     if (!id || !runId) return;
+    setVideos([]);
+    setVideosLoaded(false);
     void fetchJson<RunRecord>(`/api/projects/${id}/runs/${runId}`)
-      .then(setRun)
+      .then((r) => {
+        setRun(r);
+        if (r.options?.recordVideo === true) {
+          void fetchJson<{ videos: { path: string; label: string }[] }>(
+            `/api/projects/${id}/runs/${runId}/videos`,
+          )
+            .then((data) => setVideos(data.videos ?? []))
+            .catch(() => setVideos([]))
+            .finally(() => setVideosLoaded(true));
+        } else {
+          setVideosLoaded(true);
+        }
+      })
       .catch(() => setRun(null));
     void fetchJson<FixSuggestion>(`/api/projects/${id}/runs/${runId}/fix`)
       .then(setFix)
@@ -68,6 +84,36 @@ export function ReportPage() {
         src={`/api/projects/${id}/runs/${runId}/report?v=${encodeURIComponent(runId)}`}
         className="flex-1 w-full min-h-[480px] bg-white"
       />
+
+      {run?.options?.recordVideo === true && videosLoaded && (
+        <div className="px-6 py-3 border-t border-slate-800 space-y-3">
+          <h2 className="text-sm font-medium">Run 录像</h2>
+          {videos.length === 0 ? (
+            <p className="text-xs text-amber-400/90">
+              已开启录像，但未找到 test-results 下的 video.webm（可能尚未落盘或路径异常）。
+            </p>
+          ) : (
+            <ul className="space-y-4">
+              {videos.map((v) => {
+                const src = `/api/projects/${id}/runs/${runId}/videos/download?path=${encodeURIComponent(v.path)}`;
+                return (
+                  <li key={v.path} className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-3 text-xs">
+                      <span className="text-slate-400 font-mono">{v.label}</span>
+                      <a href={src} download className="text-emerald-400 hover:underline">
+                        下载 webm
+                      </a>
+                    </div>
+                    <video controls className="max-w-3xl w-full rounded border border-slate-700 bg-black" src={src}>
+                      <track kind="captions" />
+                    </video>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
 
       {showFix && id && runId && (
         <div className="px-6 pb-2">

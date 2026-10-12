@@ -16,7 +16,7 @@ DIALOG_STROKE_RATIOS: list[tuple[float, float]] = [
     (0.925, 0.800),
 ]
 
-# 录制 sales-portal-order.py L57 页内 canvas 点击（Customer Consent）
+# 页内 canvas 点击（Customer Consent）
 RECORDED_CONSENT_CANVAS_POS = {"x": 769, "y": 113}
 
 # 录制页内条款 canvas 坐标（付款后、chevron 前）

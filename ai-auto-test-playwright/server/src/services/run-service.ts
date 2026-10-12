@@ -20,6 +20,7 @@ import {
 import { authDisabled } from "../middleware/auth.js";
 import { createVncToken } from "../routes/vnc-tokens.js";
 import type { ProjectService } from "./project-service.js";
+import type { ProjectEnvService } from "./project-env-service.js";
 import { parseFailedNodeIdsFromLogs } from "../utils/pytest-node-ids.js";
 
 export type RunStartOptions = RunRequestBody;
@@ -76,6 +77,7 @@ export class RunService {
   constructor(
     private readonly config: AppConfig,
     private readonly projectService: ProjectService,
+    private readonly projectEnvService: ProjectEnvService,
   ) {}
 
   isRunning(): boolean {
@@ -179,6 +181,7 @@ export class RunService {
       runId,
       headed: resolved.headed,
       slowmo: resolved.slowmo,
+      recordVideo: resolved.recordVideo,
       specFilter: resolved.specFilter,
       nodeIds,
     };
@@ -202,6 +205,7 @@ export class RunService {
         headed: resolved.headed,
         slowmo: runOptions.slowmo,
         vncPreview: resolved.vncPreview,
+        recordVideo: resolved.recordVideo,
         specFilter: runOptions.specFilter ?? null,
         nodeIds,
         rerunFailedOnly: options.rerunFailedOnly ?? false,
@@ -251,6 +255,7 @@ export class RunService {
       project.workspacePath,
       runOptions,
       effectiveVncPreview(resolved),
+      projectId,
     ).catch((err) => {
       console.error(`[run-service] ${runId} failed:`, err);
     });
@@ -363,15 +368,76 @@ export class RunService {
     return abs;
   }
 
+  async listRunVideos(
+    projectId: string,
+    runId: string,
+  ): Promise<{ path: string; label: string }[]> {
+    const run = await this.getRun(projectId, runId);
+    if (!run) {
+      throw new AppError("RUN_NOT_FOUND", `Run not found: ${runId}`, 404);
+    }
+    const project = await this.projectService.getById(projectId);
+    if (!project) {
+      throw new AppError("PROJECT_NOT_FOUND", `Project not found: ${projectId}`, 404);
+    }
+    const testsRoot = path.join(project.workspacePath, "tests");
+    const root = path.join(testsRoot, "test-results");
+    const paths: string[] = [];
+    await this.walkVideos(root, testsRoot, paths);
+    return paths.sort().map((rel) => ({
+      path: rel,
+      label: path.basename(path.dirname(rel)) || rel,
+    }));
+  }
+
+  async getVideoPath(projectId: string, runId: string, videoRelPath: string): Promise<string> {
+    const run = await this.getRun(projectId, runId);
+    if (!run) {
+      throw new AppError("RUN_NOT_FOUND", `Run not found: ${runId}`, 404);
+    }
+    const project = await this.projectService.getById(projectId);
+    if (!project) {
+      throw new AppError("PROJECT_NOT_FOUND", `Project not found: ${projectId}`, 404);
+    }
+
+    const normalized = videoRelPath.replace(/^\/+/, "").replace(/^tests\//, "");
+    if (!normalized.endsWith(".webm")) {
+      throw new AppError("VIDEO_NOT_FOUND", `Video not found: ${videoRelPath}`, 404);
+    }
+    const abs = path.resolve(project.workspacePath, "tests", normalized);
+    const allowedRoot = path.resolve(project.workspacePath, "tests/test-results");
+    if (!abs.startsWith(`${allowedRoot}${path.sep}`) && abs !== allowedRoot) {
+      throw new AppError("VIDEO_NOT_FOUND", `Video not found: ${videoRelPath}`, 404);
+    }
+    await fs.access(abs).catch(() => {
+      throw new AppError("VIDEO_NOT_FOUND", `Video not found: ${videoRelPath}`, 404);
+    });
+    return abs;
+  }
+
+  private async walkVideos(dir: string, testsRoot: string, videos: string[]): Promise<void> {
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const abs = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await this.walkVideos(abs, testsRoot, videos);
+      } else if (entry.name === "video.webm" || entry.name.endsWith(".webm")) {
+        videos.push(path.relative(testsRoot, abs).split(path.sep).join("/"));
+      }
+    }
+  }
+
   private async executeRun(
     run: RunRecord,
     workspacePath: string,
     options: PytestRunOptions,
     vncPreview: boolean,
+    projectId: string,
   ): Promise<void> {
     const command = buildPytestCommand(options);
     const logLines: string[] = [];
     let finishedPayload: Record<string, unknown> | null = null;
+    const projectEnv = await this.projectEnvService.resolveForRun(projectId);
 
     try {
       const response = await fetchWorkerStream(`${this.config.workerUrl}/internal/run`, {
@@ -382,6 +448,7 @@ export class RunService {
           workspacePath,
           command,
           vncPreview,
+          env: projectEnv,
         }),
         signal: buildRunAbortSignal(this.abortController, this.config.runTimeoutMs),
       });

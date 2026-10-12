@@ -80,13 +80,24 @@ def _sso_login_visible(page: Page, timeout_ms: int = 15_000) -> bool:
         return False
 
 
-def _sso_login(context: BrowserContext, page: Page, *, save_auth: bool = False) -> None:
+def complete_portal_login(page: Page) -> None:
+    """SSO 之后：若出现 Choose user account，选 POS；再等待门户顶栏。"""
     from pages.home_page import HomePage
+    from pages.user_selection_page import UserSelectionPage
+
+    selection = UserSelectionPage(page)
+    if selection.is_choose_account_visible(timeout_ms=8_000):
+        selection.select_pos_account()
+    else:
+        HomePage(page).expect_header_visible()
+
+
+def _sso_login(context: BrowserContext, page: Page, *, save_auth: bool = False) -> None:
     from pages.sso_login_page import SsoLoginPage
 
     sso = SsoLoginPage(page)
     sso.login()
-    HomePage(page).expect_header_visible()
+    complete_portal_login(page)
     if save_auth:
         AUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
         context.storage_state(path=str(AUTH_FILE))
@@ -106,7 +117,15 @@ def _create_auth_file(browser: Browser) -> None:
 def _ensure_portal_session(
     context: BrowserContext, page: Page, *, save_auth: bool = False
 ) -> None:
+    from pages.user_selection_page import UserSelectionPage
+
     if _portal_home_visible(page, timeout_ms=2_000):
+        return
+    if UserSelectionPage(page).is_choose_account_visible(timeout_ms=3_000):
+        complete_portal_login(page)
+        if save_auth:
+            AUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
+            context.storage_state(path=str(AUTH_FILE))
         return
     if _sso_login_visible(page, timeout_ms=15_000):
         _sso_login(context, page, save_auth=save_auth)
@@ -117,12 +136,8 @@ def _ensure_portal_session(
 
 
 @pytest.fixture()
-def logged_in_page(browser):
-    """每次用例新建 context，走 SSO 登录（不复用 fixtures/auth.json）。"""
-    context = browser.new_context(
-        ignore_https_errors=True,
-        base_url=BASE_URL,
-    )
+def logged_in_page(context: BrowserContext):
+    """每次用例新建 context（走 pytest-playwright `context`，与 `--video` / trace 一致）。"""
     page = context.new_page()
     page.goto(BASE_URL, wait_until="domcontentloaded", timeout=120_000)
     _ensure_portal_session(context, page, save_auth=False)
@@ -139,4 +154,4 @@ def logged_in_page(browser):
         clear_stale_5g_bb_draft(page, BASE_URL)
     resolve_deposit_cart_mismatch(page, BASE_URL)
     yield page
-    context.close()
+    page.close()

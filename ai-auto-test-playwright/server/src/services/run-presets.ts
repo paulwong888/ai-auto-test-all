@@ -10,6 +10,7 @@ export interface RunRequestBody {
   headed?: boolean;
   slowmo?: number;
   vncPreview?: boolean;
+  recordVideo?: boolean;
   specFilter?: string | null;
   nodeIds?: string[];
   rerunFailedOnly?: boolean;
@@ -23,6 +24,7 @@ export interface ResolvedRunOptions {
   headed: boolean;
   slowmo: number;
   vncPreview: boolean;
+  recordVideo: boolean;
   specFilter: string | null;
   nodeIds: string[];
   parentRunId: string | null;
@@ -36,6 +38,7 @@ export function resolveRunOptions(body: RunRequestBody): ResolvedRunOptions {
       headed: preset.headed,
       slowmo: preset.slowmo,
       vncPreview: preset.vncPreview,
+      recordVideo: body.recordVideo === true,
       specFilter: body.specFilter ?? null,
       nodeIds: body.nodeIds ?? [],
       parentRunId: body.previousRunId ?? null,
@@ -47,6 +50,7 @@ export function resolveRunOptions(body: RunRequestBody): ResolvedRunOptions {
     headed,
     slowmo: body.slowmo ?? 600,
     vncPreview: body.vncPreview ?? false,
+    recordVideo: body.recordVideo === true,
     specFilter: body.specFilter ?? null,
     nodeIds: body.nodeIds ?? [],
     parentRunId: body.previousRunId ?? null,

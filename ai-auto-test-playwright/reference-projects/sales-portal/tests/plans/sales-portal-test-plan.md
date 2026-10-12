@@ -61,7 +61,7 @@ TC-008 及以后归属 **独立模块**（见 §7），不在本计划生成范�
 
 ## 6. 已确认决策
 
-1. **业务主流程**：MVP 止于 TC-007 选套餐/详情可见；**完整下单**另开模块 `sales-portal-order`（见 §7），不在本模块生成代码。
+1. **业务主流程**：MVP 止于 TC-007 选套餐/详情可见；**完整下单/支付**见模块 `sales-portal-5GBB-0929`（见 §7），不在本 browse 模块生成代码。
 2. **启动数据**：凭据仅经 **环境变量**；TC-001/002 不走 `auth.json`；TC-003+ 用 `logged_in_page`；**auth 过期自动重登**。
 3. **登录失败**：TC-002 断言 Keycloak **内联 alert**（Invalid/incorrect 等）；**不测空字段/账号锁定**（未实现 TC003 空字段）。
 4. **分页**：按钮 **2** 为列表 **第 2 页**；须 **先 HBB → BB** 再分页。
@@ -77,7 +77,7 @@ TC-008 及以后归属 **独立模块**（见 §7），不在本计划生成范�
 | moduleName | 录制 | 计划 | 代码 | 说明 |
 |------------|------|------|------|------|
 | `sales-portal` | `recorded/sales-portal.py` | 本文件 | `specs/test_sales_portal.py` | **MVP 浏览**，已上线 |
-| `sales-portal-order` | 建议自 `recorded/saucedemo.py` 迁移命名 | `plans/sales-portal-order-test-plan.md`（待建） | 未生成 | 下单/KYC/支付；**待 §5 业务确认后再 Code** |
+| `sales-portal-5GBB-0929` | （归档录制见 plan） | `plans/sales-portal-5GBB-0929-test-plan.md` | `specs/test_sales_portal_5gbb_0929.py` | 5G BB 全流程 + 在线支付网关 |
 
 > `tests/recorded/saucedemo.py` 为历史误命名（非 Saucedemo 演示站），仅表示 **下单扩展录制**；新功能请用 **`sales-portal-<功能>`** 命名。
 

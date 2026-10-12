@@ -5,6 +5,7 @@ export interface PytestRunOptions {
   runId?: string;
   headed?: boolean;
   slowmo?: number;
+  recordVideo?: boolean;
   specFilter?: string | null;
   nodeIds?: string[];
 }
@@ -35,6 +36,8 @@ export function buildPytestCommand(options: PytestRunOptions): string {
     ? `.runs/${options.runId}/report.html`
     : "report.html";
 
+  const video = options.recordVideo === true ? "--video=on" : "";
+
   const parts = [
     `cd ${shellQuote(`${options.workspacePath}/tests`)}`,
     "&&",
@@ -42,6 +45,7 @@ export function buildPytestCommand(options: PytestRunOptions): string {
     target,
     headed,
     slowmo,
+    video,
     "--tracing retain-on-failure",
     "--output test-results",
     `--html ${htmlReport} --self-contained-html`,

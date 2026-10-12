@@ -181,6 +181,20 @@ def _heartbeat_loop(
             connected.clear()
 
 
+def _build_run_env(
+    extra_env: dict[str, str] | None,
+    *,
+    display: str | None = None,
+) -> dict[str, str] | None:
+    has_extra = bool(extra_env)
+    if not has_extra and not display:
+        return None
+    merged = {**os.environ, **(extra_env or {})}
+    if display:
+        merged["DISPLAY"] = display
+    return merged
+
+
 def run_command(
     run_id: str,
     command: str,
@@ -188,6 +202,7 @@ def run_command(
     *,
     workspace_path: str | None = None,
     vnc_preview: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> None:
     started = time.time()
     output_chunks: list[str] = []
@@ -204,15 +219,15 @@ def run_command(
 
     headed = "--headed" in command
     display = ":99" if Path("/tmp/.X11-unix/X99").exists() else None
+    display_for_env: str | None = None
     if headed and (vnc_preview or display):
         wrapped = f"sh -c {json.dumps(command)}"
-        run_env = {**os.environ, "DISPLAY": display or ":99"}
+        display_for_env = display or ":99"
     elif headed:
         wrapped = f"xvfb-run -a sh -c {json.dumps(command)}"
-        run_env = None
     else:
         wrapped = f"sh -c {json.dumps(command)}"
-        run_env = None
+    run_env = _build_run_env(extra_env, display=display_for_env)
 
     timeout_sec = max(RUN_TIMEOUT_MS // 1000, 60)
     proc = subprocess.Popen(
@@ -365,6 +380,10 @@ class WorkerHandler(BaseHTTPRequestHandler):
             command = str(payload.get("command", ""))
             workspace_path = str(payload.get("workspacePath", "")).strip() or None
             vnc_preview = payload.get("vncPreview") is True
+            raw_env = payload.get("env")
+            extra_env: dict[str, str] = {}
+            if isinstance(raw_env, dict):
+                extra_env = {str(k): str(v) for k, v in raw_env.items()}
             if not run_id or not command:
                 self._send_json(400, {"ok": False, "error": "runId and command are required"})
                 return
@@ -379,6 +398,7 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 self.wfile,
                 workspace_path=workspace_path,
                 vnc_preview=vnc_preview,
+                extra_env=extra_env or None,
             )
             return
 

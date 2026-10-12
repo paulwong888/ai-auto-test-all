@@ -29,6 +29,7 @@ import { RecorderService } from "./services/recorder-service.js";
 import { JobScheduler } from "./services/job-scheduler.js";
 import { AuditService } from "./services/audit-service.js";
 import { LlmConfigService } from "./services/llm-config-service.js";
+import { ProjectEnvService } from "./services/project-env-service.js";
 import { PiAgentConfigWriter } from "./services/pi-agent-config-writer.js";
 import { createSettingsRouter } from "./routes/settings.js";
 import { PlatformPipelineService } from "./services/platform-pipeline-service.js";
@@ -41,11 +42,12 @@ const projectService = new ProjectService(config);
 const templateService = new ProjectTemplateService(config);
 const workflowService = new WorkflowService(projectService, templateService);
 const llmConfigService = new LlmConfigService(config);
+const projectEnvService = new ProjectEnvService();
 const piAgentConfigWriter = new PiAgentConfigWriter();
 const piJobRunner = new PiJobRunner(config, llmConfigService, piAgentConfigWriter);
 const planService = new PlanService(config, projectService, piJobRunner);
 const codegenService = new CodegenService(config, projectService, piJobRunner);
-const runService = new RunService(config, projectService);
+const runService = new RunService(config, projectService, projectEnvService);
 const collectService = new PytestCollectService(config, projectService);
 const fixService = new FixService(config, projectService, piJobRunner);
 fixService.setRunService(runService);
@@ -87,6 +89,7 @@ app.use("/api/projects", requireAuth, createProjectsRouter(projectService, {
   recorderService,
   auditService,
   llmConfigService,
+  projectEnvService,
   platformPipelineService,
 }));
 app.use("/api/jobs", requireAuth, createJobsRouter({ piJobRunner, runService }));

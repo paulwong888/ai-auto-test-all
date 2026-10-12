@@ -6,9 +6,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from playwright.sync_api import sync_playwright
 
-from conftest import AUTH_FILE, BASE_URL, _create_auth_file, _portal_home_visible
-from pages.home_page import HomePage
+from conftest import AUTH_FILE, BASE_URL, _portal_home_visible, complete_portal_login
 from pages.sso_login_page import SsoLoginPage
+from data.account_factory import get_pos_account
 
 
 def _logout_if_logged_in(page) -> None:
@@ -53,11 +53,11 @@ def main() -> int:
         if not _portal_home_visible(page, timeout_ms=5_000):
             print("[refresh] SSO login…")
             SsoLoginPage(page).login()
-            HomePage(page).expect_header_visible()
+            complete_portal_login(page)
 
         context.storage_state(path=str(AUTH_FILE))
         body = page.locator("body").inner_text()
-        print(f"[refresh] auth saved; logged in as contains paulhp={'paulhp' in body.lower()}")
+        print(f"[refresh] auth saved; POS={get_pos_account()}; paulhp={'paulhp' in body.lower()}")
         browser.close()
     return 0
 

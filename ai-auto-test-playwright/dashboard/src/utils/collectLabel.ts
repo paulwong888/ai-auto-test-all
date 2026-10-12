@@ -7,7 +7,6 @@ export interface CollectItemLike {
 
 const SPEC_SHORT_NAMES: Record<string, string> = {
   test_sales_portal_5gbb_0929: "5GBB-0929",
-  test_sales_portal_order: "Order",
   test_sales_portal: "Portal",
 };
 

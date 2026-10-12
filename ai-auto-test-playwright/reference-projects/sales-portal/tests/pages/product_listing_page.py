@@ -179,9 +179,24 @@ class ProductListingPage:
             _try_back_to_browse_from_payment_wait(self.page, BASE_URL)
             exit_draft_application_to_browse(self.page)
 
+    def _pagination_button(self, page_number: int):
+        """套餐列表分页（限定主内容区，避免误点侧栏/其它 name=数字 的按钮）。"""
+        root = self.page.locator(".flex-body").first
+        btn = root.get_by_role("button", name=str(page_number), exact=True)
+        if btn.count() > 0:
+            return btn.first
+        return self.page.get_by_role("button", name=str(page_number), exact=True).first
+
     def go_to_page(self, page_number: int) -> None:
-        self.page.get_by_role("button", name=str(page_number)).click()
+        self._dismiss_sidebar_mask()
+        if not can_browse_offers(self.page):
+            _try_back_to_browse_from_payment_wait(self.page, BASE_URL)
+        btn = self._pagination_button(page_number)
+        expect(btn).to_be_visible(timeout=15_000)
+        btn.scroll_into_view_if_needed()
+        btn.click(force=True)
         self.page.wait_for_load_state("networkidle")
+        self.page.wait_for_timeout(400)
 
     def _offer_locator(self, key: str):
         card = self.page.locator("div.box").filter(has_text=key)
@@ -252,22 +267,6 @@ class ProductListingPage:
             expect(fallback).to_be_visible(timeout=15_000)
             return
         expect(self._offer_locator(key)).to_be_visible(timeout=15_000)
-
-    def select_offer_by_key(self) -> None:
-        """点击目标套餐卡片（offer_factory key）；已选中则跳过重复点击。"""
-        key = get_offer()["key"]
-        if self._offer_visible(key):
-            card = self._offer_locator(key)
-        else:
-            card = self._fallback_offer_card()
-            if card is None:
-                card = self._offer_locator(key)
-        expect(card).to_be_visible(timeout=15_000)
-        card.evaluate("el => el.scrollIntoView({block: 'center', inline: 'nearest'})")
-        self.page.wait_for_timeout(400)
-        cls = card.get_attribute("class") or ""
-        if "selected" not in cls:
-            card.click(timeout=15_000)
 
     def select_target_offer(self) -> None:
         offer = get_offer()

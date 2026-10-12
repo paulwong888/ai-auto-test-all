@@ -49,6 +49,7 @@ from pages.payment_result_page import PaymentResultPage
 from pages.product_listing_page import ProductListingPage
 from pages.sim_service_page import SimServicePage
 from pages.step8_complete_page import Step8CompletePage
+from helpers.cashier_sit_topup import install_payment_txn_capture
 
 
 @pytest.fixture(autouse=True)
@@ -155,22 +156,9 @@ class TestSalesPortal5GBB0929:
         payment.sign_inline()
         return order, kyc
 
-    @pytest.mark.smoke
-    def test_tc100_5gbb_online_payment(self, logged_in_page: Page) -> None:
-        page = logged_in_page
-
-        if self._try_finish_resumed_step8(page):
-            expect(page.locator("app-new-header")).to_be_visible(timeout=30_000)
-            return
-
-        try:
-            self._reach_offer(ProductListingPage(page))
-        except AssertionError:
-            if self._try_finish_resumed_step8(page):
-                expect(page.locator("app-new-header")).to_be_visible(timeout=30_000)
-                return
-            raise
-
+    def _wizard_through_sim_with_hkid_retry(
+        self, page: Page
+    ) -> tuple[OrderApplicationPage, KycPage, SimServicePage]:
         max_hkid_retries = 15 if should_track_hkid_usage() else 3
         order: OrderApplicationPage | None = None
         kyc: KycPage | None = None
@@ -205,11 +193,46 @@ class TestSalesPortal5GBB0929:
             )
 
         assert order is not None and kyc is not None
-
         sim = SimServicePage(page)
         sim.fill_sim_ids()
         sim.agree_terms()
         sim.sign_consent()
+        return order, kyc, sim
+
+    def _mark_pool_usage(self, kyc: KycPage, sim: SimServicePage) -> None:
+        if should_track_hkid_usage() and kyc.last_hkid:
+            mark_hkid_used(kyc.last_hkid, reason="order_success")
+        if should_track_sim_usage() and sim.last_sim_pair:
+            mark_sim_pair_used(sim.last_sim_pair[0])
+
+    def _assert_no_gateway_popup(self, page: Page, *, wait_ms: int = 5_000) -> None:
+        ctx = page.context
+        count_before = len(ctx.pages)
+        page.wait_for_timeout(wait_ms)
+        for p in ctx.pages[count_before:]:
+            if p.is_closed():
+                continue
+            url = p.url or ""
+            if "paygwuat" in url or "checkout/transaction" in url:
+                raise AssertionError(f"Cashier 路径不应打开支付网关: {url}")
+
+    @pytest.mark.smoke
+    def test_tc100_5gbb_online_payment(self, logged_in_page: Page) -> None:
+        page = logged_in_page
+
+        if self._try_finish_resumed_step8(page):
+            expect(page.locator("app-new-header")).to_be_visible(timeout=30_000)
+            return
+
+        try:
+            self._reach_offer(ProductListingPage(page))
+        except AssertionError:
+            if self._try_finish_resumed_step8(page):
+                expect(page.locator("app-new-header")).to_be_visible(timeout=30_000)
+                return
+            raise
+
+        order, kyc, sim = self._wizard_through_sim_with_hkid_retry(page)
 
         order.next_step()
 
@@ -232,9 +255,25 @@ class TestSalesPortal5GBB0929:
         result.back_to_index()
 
         expect(page.locator("app-new-header")).to_be_visible(timeout=30_000)
+        self._mark_pool_usage(kyc, sim)
 
-        if should_track_hkid_usage() and kyc.last_hkid:
-            mark_hkid_used(kyc.last_hkid, reason="order_success")
+    @pytest.mark.smoke
+    def test_tc100_5gbb_cash_payment(self, logged_in_page: Page) -> None:
+        page = logged_in_page
+        install_payment_txn_capture(page)
+        self._reach_offer(ProductListingPage(page))
+        order, kyc, sim = self._wizard_through_sim_with_hkid_retry(page)
 
-        if should_track_sim_usage() and sim.last_sim_pair:
-            mark_sim_pair_used(sim.last_sim_pair[0])
+        order.next_step()
+        pm = PaymentMethodPage(page)
+        pm.expect_on_step()
+        pm.pick_cashier()
+        order.next_step()
+        self._assert_no_gateway_popup(page)
+
+        step8 = Step8CompletePage(page)
+        step8.complete_cashier_via_status_check()
+        PaymentResultPage(page).back_to_index()
+
+        expect(page.locator("app-new-header")).to_be_visible(timeout=30_000)
+        self._mark_pool_usage(kyc, sim)

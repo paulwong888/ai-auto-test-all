@@ -76,6 +76,7 @@ export function RunPage() {
   const [headed, setHeaded] = useState(true);
   const [slowmo, setSlowmo] = useState(600);
   const [vncPreview, setVncPreview] = useState(false);
+  const [recordVideo, setRecordVideo] = useState(false);
   interface CollectItem {
     nodeId: string;
     name: string;
@@ -235,17 +236,19 @@ export function RunPage() {
   };
 
   const runWithPreset = () => {
+    const videoOpt = recordVideo ? { recordVideo: true } : {};
     if (preset === "custom") {
       void startRun({
         preset: "custom",
         headed,
         slowmo: slowmo || undefined,
         vncPreview: headed && vncPreview,
+        ...videoOpt,
         ...runSelection(),
       });
       return;
     }
-    void startRun({ preset, ...runSelection() });
+    void startRun({ preset, ...videoOpt, ...runSelection() });
   };
 
   const lastFailed = runs.find((r) => r.failed > 0 || r.status === "failed");
@@ -274,6 +277,21 @@ export function RunPage() {
         {preset === "debug" && (
           <p className="text-xs text-slate-400">
             debug 默认 Headed + SlowMo，并在下方展示 Worker 虚拟桌面 noVNC 预览（非本机弹窗）。
+          </p>
+        )}
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={recordVideo}
+            onChange={(e) => setRecordVideo(e.target.checked)}
+          />
+          录像（保存 webm）
+        </label>
+        {recordVideo && (
+          <p className="text-xs text-slate-500">
+            勾选后 pytest-playwright 会以 <code className="text-slate-400">--video on</code>{" "}
+            为本次选中用例保留 Playwright 视频；长用例体积较大，报告页可预览/下载。
           </p>
         )}
 
@@ -347,6 +365,7 @@ export function RunPage() {
                   preset: "ci",
                   rerunFailedOnly: true,
                   previousRunId: lastFailed.id,
+                  ...(recordVideo ? { recordVideo: true } : {}),
                 })
               }
               disabled={busy || liveRunning}

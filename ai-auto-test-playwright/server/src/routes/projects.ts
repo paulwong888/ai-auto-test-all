@@ -11,6 +11,8 @@ import type { GitService } from "../services/git-service.js";
 import type { RecorderService } from "../services/recorder-service.js";
 import type { AuditService } from "../services/audit-service.js";
 import type { LlmConfigService } from "../services/llm-config-service.js";
+import type { ProjectEnvService } from "../services/project-env-service.js";
+import { createProjectEnvSettingsRouter } from "./project-env-settings.js";
 import type { PlatformPipelineService } from "../services/platform-pipeline-service.js";
 import { createPipelineRouter } from "./pipeline.js";
 import { createProjectLlmSettingsRouter } from "./project-llm-settings.js";
@@ -50,6 +52,7 @@ export function createProjectsRouter(
     recorderService: RecorderService;
     auditService: AuditService;
     llmConfigService: LlmConfigService;
+    projectEnvService: ProjectEnvService;
     platformPipelineService: PlatformPipelineService;
   },
 ): Router {
@@ -71,6 +74,7 @@ export function createProjectsRouter(
     router.use("/:id", createMembersRouter(deps.auditService));
     router.use("/:id", createAuditRouter(deps.auditService));
     router.use("/:id", createProjectLlmSettingsRouter(deps.llmConfigService));
+    router.use("/:id", createProjectEnvSettingsRouter(deps.projectEnvService));
   }
 
   router.get("/", async (req: AuthedRequest, res) => {
