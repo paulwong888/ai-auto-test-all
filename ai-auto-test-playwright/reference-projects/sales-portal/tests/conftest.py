@@ -80,16 +80,29 @@ def _sso_login_visible(page: Page, timeout_ms: int = 15_000) -> bool:
         return False
 
 
+def _looks_like_sso_url(page: Page) -> bool:
+    u = (page.url or "").lower()
+    return (
+        "rhsso" in u
+        or "/auth/realms/" in u
+        or "openid-connect/auth" in u
+        or "/login/oauth2" in u
+    )
+
+
 def complete_portal_login(page: Page) -> None:
-    """SSO 之后：若出现 Choose user account，选 POS；再等待门户顶栏。"""
-    from pages.home_page import HomePage
+    """SSO 之后：Choose user account / 非默认 POS 子账号（含中途 session 过期重登）。"""
     from pages.user_selection_page import UserSelectionPage
 
-    selection = UserSelectionPage(page)
-    if selection.is_choose_account_visible(timeout_ms=8_000):
-        selection.select_pos_account()
-    else:
-        HomePage(page).expect_header_visible()
+    UserSelectionPage(page).ensure_pos_account()
+
+
+def recover_portal_session_if_needed(page: Page) -> bool:
+    """向导中途跳 Keycloak 时重新 SSO 并恢复 SALES_PORTAL_POS_ACCOUNT 子账号。"""
+    if not (_looks_like_sso_url(page) or _sso_login_visible(page, timeout_ms=2_000)):
+        return False
+    _sso_login(page.context, page, save_auth=False)
+    return True
 
 
 def _sso_login(context: BrowserContext, page: Page, *, save_auth: bool = False) -> None:
@@ -119,6 +132,14 @@ def _ensure_portal_session(
 ) -> None:
     from pages.user_selection_page import UserSelectionPage
 
+    # Keycloak 重定向页：不要先等门户顶栏 / Choose account（各白等数秒）
+    if _looks_like_sso_url(page):
+        _sso_login(context, page, save_auth=save_auth)
+        return
+    if _sso_login_visible(page, timeout_ms=2_000):
+        _sso_login(context, page, save_auth=save_auth)
+        return
+
     if _portal_home_visible(page, timeout_ms=2_000):
         return
     if UserSelectionPage(page).is_choose_account_visible(timeout_ms=3_000):
@@ -140,6 +161,9 @@ def _open_logged_in_page(context: BrowserContext) -> Page:
     page = context.new_page()
     page.goto(BASE_URL, wait_until="domcontentloaded", timeout=120_000)
     _ensure_portal_session(context, page, save_auth=False)
+    from pages.user_selection_page import UserSelectionPage
+
+    UserSelectionPage(page).ensure_pos_account()
     from pages.overlay_helpers import (
         cart_amount_looks_stale,
         clear_pending_payment_order,
@@ -165,10 +189,32 @@ def logged_in_page(context: BrowserContext):
 
 @pytest.fixture()
 def logged_in_page_sdir(context: BrowserContext, monkeypatch: pytest.MonkeyPatch):
-    """登录并选择 CRM-PAULHP-SDIR（Direct Sale + Online Payment）。"""
+    """登录并在 Choose user account 选择 CRM-AUTOTEST-SDIR（Direct Sale）。"""
     from data.account_factory import POS_ACCOUNT_DIRECT_SALES
 
     monkeypatch.setenv("SALES_PORTAL_POS_ACCOUNT", POS_ACCOUNT_DIRECT_SALES)
+    page = _open_logged_in_page(context)
+    yield page
+    page.close()
+
+
+@pytest.fixture()
+def logged_in_page_fortress(context: BrowserContext, monkeypatch: pytest.MonkeyPatch):
+    """登录并在 Choose user account 选择 CRM-AUTOTEST-FORTRESS（Fortress Payment）。"""
+    from data.account_factory import POS_ACCOUNT_FORTRESS
+
+    monkeypatch.setenv("SALES_PORTAL_POS_ACCOUNT", POS_ACCOUNT_FORTRESS)
+    page = _open_logged_in_page(context)
+    yield page
+    page.close()
+
+
+@pytest.fixture()
+def logged_in_page_simonly(context: BrowserContext, monkeypatch: pytest.MonkeyPatch):
+    """登录并在 Choose user account 选择 CRM-AUTOTEST-PREPAID001（Sim Only TC-100）。"""
+    from data.account_factory import POS_ACCOUNT_SIM_ONLY
+
+    monkeypatch.setenv("SALES_PORTAL_POS_ACCOUNT", POS_ACCOUNT_SIM_ONLY)
     page = _open_logged_in_page(context)
     yield page
     page.close()

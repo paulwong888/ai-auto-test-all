@@ -61,7 +61,8 @@
 ### 阶段 G2 — PAYMENT（`app-new-payment`）
 29a. **Cashier**（默认）：`inputId="Cashier"` → COMPLETE 步 **不** 弹网关 → SIT 调 **topupMultipleWallet**（`PAYMENT_TRANSACTION_ID` + 当前金额）→ **Check Payment Status** → **Back to index**
 29b. **Online Payment**：`inputId="OnlinePayment"` → COMPLETE 步 Step8 `ngOnInit` **自动** `window.open` 网关（`expect_popup`）
-29c. **Direct Sale Payment**：`inputId="DirectSales"`（POS `CRM-PAULHP-SDIR`）→ COMPLETE 步点 **Direct Sale Payment** → **Confirm Payment**（无网关、无 topupMultipleWallet）→ **Check Payment Status** → **Back to index**
+29c. **Direct Sale Payment**：`inputId="DirectSales"`（POS `CRM-AUTOTEST-SDIR`）→ COMPLETE 步点 **Direct Sale Payment** → **Enter payment amount** → **Continue** → **Confirm Payment**（无网关、无 topupMultipleWallet）→ **Check Payment Status** → **Back to index**
+29d. **Fortress Payment**：`inputId="FortressPayment"`（POS `CRM-AUTOTEST-FORTRESS`）→ 选套餐后 **Fortress Payment Shop** 填 **Shop ID**（`SALES_PORTAL_FORTRESS_SHOP_ID`）→ COMPLETE 步 **Fortress Payment** → **Confirm Payment** → **Check Payment Status** → **Back to index**
 30. 点击 `.pi.pi-chevron-right` 进入 COMPLETE 步
 
 ### 阶段 H — 支付网关弹窗（paygwuat.hthk.com）★本模块新增
@@ -117,18 +118,11 @@
 ## 4. TC 清单（方法名）
 
 > 规格文件：`specs/test_sales_portal_5gbb_0929.py`，类名 `TestSalesPortal5GBB0929`。
-> TC-001 用完整 SSO；TC-002 起复用 `logged_in_page`（auth.json）。
+> TC-001～TC-007 **无独立 pytest**（browse 模块已下线）；对应步骤合并在 **TC-100** smoke 内。
 > 沿用项目惯例：**TC-100 为串联 smoke**（`test_tc100_5gbb_online_payment`）。
 
 | TC 编号 | 方法名 | 描述 | 主要断言 |
 |---------|--------|------|---------|
-| TC-001 | `test_tc001_sso_login_success` | 正确账号密码 SSO 登录 | URL 回 BASE_URL；`app-new-header` 可见 |
-| TC-002 | `test_tc002_nav_5g_hbb_then_bb` | 侧栏导航 5G HBB → 5G BB | 列表刷新，BB 套餐条目可见 |
-| TC-003 | `test_tc003_offer_pagination_page3` | 报价列表翻到第 3 页 | 页码 3 选中态、列表内容变化 |
-| TC-004 | `test_tc004_select_plan_hpprm5641` | 选择套餐 `HPPRM00000056415G Broadband` | 进入申请向导，套餐编码可见 |
-| TC-005 | `test_tc005_wizard_next_step` | 向导下一步进入 KYC 阶段 | Test ID / Credit Check 区可见 |
-| TC-006 | `test_tc006_kyc_fill_test_id` | 填 Test ID override（factory/env） | 输入框回显值正确 |
-| TC-007 | `test_tc007_kyc_upload_hkid_image` | 上传身份证明图片（fixture） | 上传成功、无报错提示 |
 | TC-008 | `test_tc008_kyc_credit_check` | 点击 Credit Check 触发征信核查 | 核查完成态/后续字段解锁 |
 | TC-009 | `test_tc009_kyc_contact_mobile_verify` | Contact Mobile + Verify（OTP stub） | Verify 通过提示 |
 | TC-010 | `test_tc010_address_autocomplete_select` | 地址联想选择 `1A YEN CHOW STREET, BLOCK A` + Kowloon | 地址字段回填、District 联动 |
@@ -151,8 +145,9 @@
 | TC-100 | `test_tc100_5gbb_online_payment` | **串联 smoke（在线）**：…→SIM→Online Payment→网关→Check Payment Status→Back to index | 全链路无致命错误 |
 | TC-100 | `test_tc100_5gbb_cash_payment` | **串联 smoke（Cashier）**：…→SIM→Cashier→Step8 轮询 Check Payment Status→Back to index | 无网关 popup；订单成功文案 |
 | TC-100 | `test_tc100_5gbb_direct_sale_payment` | **串联 smoke（Direct Sale）**：POS SDIR→…→SIM→Direct Sales→Step8 Confirm Payment→Check Payment Status→Back to index | 无网关 popup；无 topup API |
+| TC-100 | `test_tc100_5gbb_fortress_payment` | **串联 smoke（Fortress）**：POS FORTRESS→Shop ID→…→SIM→Fortress Payment→Step8 Confirm→Back to index | 无网关；需 `SALES_PORTAL_FORTRESS_SHOP_ID` |
 
-> 实施粒度建议（沿上模块决策 §6.8）：首版仅实现 **TC-100 串联 smoke**（步骤注释引用 TC-005–TC-023）；TC-001–TC-003 浏览段可复用 `sales-portal` spec 不重复实现；TC-024–TC-026 负向用例作为后续拆分。最终以人工确认为准（待确认项 10）。
+> 实施粒度：仅 **TC-100 串联 smoke**（步骤覆盖原 TC-005–TC-023 主路径）；TC-024–TC-026 负向用例作为后续拆分。
 
 ---
 

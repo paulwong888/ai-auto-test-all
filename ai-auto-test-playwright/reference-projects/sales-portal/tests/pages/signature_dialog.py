@@ -46,17 +46,38 @@ def expand_consent_signature_section(page: Page) -> None:
                 if tab.get_attribute("aria-expanded") == "false":
                     tab.scroll_into_view_if_needed()
                     tab.click()
-                    page.wait_for_timeout(400)
+                    page.wait_for_timeout(120)
             except Exception:
                 tab.click(force=True)
-                page.wait_for_timeout(400)
+                page.wait_for_timeout(120)
     sign_here = page.get_by_text(re.compile(r"Please sign here", re.I))
     if sign_here.count() > 0:
         try:
             sign_here.first.scroll_into_view_if_needed()
         except Exception:
             pass
-    page.wait_for_timeout(200)
+    page.wait_for_timeout(80)
+
+
+def _wait_signature_canvas_ready(
+    canvas: Locator, *, attempts: int = 15, interval_ms: int = 60
+) -> bool:
+    """弹窗/手风琴展开后 canvas 常先 0×0；短轮询即可，不必空等数秒。"""
+    page = canvas.page
+    for _ in range(attempts):
+        box = canvas.bounding_box()
+        if box and box.get("width", 0) > 8 and box.get("height", 0) > 8:
+            return True
+        try:
+            dims = canvas.evaluate(
+                "(c) => ({ w: c.width || c.clientWidth || 0, h: c.height || c.clientHeight || 0 })"
+            )
+            if dims.get("w", 0) > 8 and dims.get("h", 0) > 8:
+                return True
+        except Exception:
+            pass
+        page.wait_for_timeout(interval_ms)
+    return False
 
 
 def canvas_has_ink(canvas: Locator) -> bool:
@@ -258,7 +279,26 @@ def _please_sign_here_valid(page: Page) -> bool:
         return False
 
 
+def _please_sign_here_present(page: Page) -> bool:
+    """DOM 含 Please sign here（含折叠手风琴内文案）。"""
+    try:
+        if page.get_by_text(re.compile(r"Please sign here", re.I)).count() > 0:
+            return True
+    except Exception:
+        pass
+    try:
+        body = page.locator("body").inner_text()
+        return bool(re.search(r"Please sign here", body, re.I))
+    except Exception:
+        return False
+
+
 def consent_signature_valid(page: Page) -> bool:
+    if _please_sign_here_present(page):
+        return _please_sign_here_valid(page)
+    hint = page.get_by_text(re.compile(r"Please sign here", re.I))
+    if hint.count() > 0 and hint.first.is_visible():
+        return _please_sign_here_valid(page)
     if _please_sign_here_valid(page):
         return True
     for canvas in _consent_canvas_locators(page):
@@ -431,20 +471,40 @@ def stroke_canvas(
     *,
     force: bool = False,
     scroll: bool = True,
+    fast: bool = True,
 ) -> None:
-    """在 canvas 上按相对坐标画多笔签名（拖拽 + 分段笔划）。"""
-    expect(canvas).to_be_visible(timeout=15_000)
+    """在 canvas 上签名；默认先 JS pointer（弹窗一出现即可签），失败再鼠标拖拽。"""
+    expect(canvas).to_be_visible(timeout=8_000)
     if scroll:
         canvas.scroll_into_view_if_needed()
     page = canvas.page
+
+    if fast:
+        _wait_signature_canvas_ready(canvas)
+        _dispatch_signature_pad_stroke(canvas, ratios)
+        page.wait_for_timeout(60)
+        if canvas_has_ink(canvas):
+            return
+        _commit_signature_stroke(canvas)
+        page.wait_for_timeout(60)
+        if canvas_has_ink(canvas):
+            return
+        _try_angular_sign_complete(canvas)
+        page.wait_for_timeout(60)
+        if canvas_has_ink(canvas):
+            return
+
     box = None
-    for _ in range(20):
+    for _ in range(8):
         box = canvas.bounding_box()
-        if box and box.get("width", 0) > 20 and box.get("height", 0) > 10:
+        if box and box.get("width", 0) > 10 and box.get("height", 0) > 8:
             break
-        page.wait_for_timeout(200)
-    if box is None:
+        page.wait_for_timeout(80)
+    if not box or box.get("width", 0) < 10:
         canvas.click(force=force)
+        page.wait_for_timeout(80)
+        if not canvas_has_ink(canvas):
+            _dispatch_signature_pad_stroke(canvas, ratios)
         return
 
     points = [
@@ -454,12 +514,12 @@ def stroke_canvas(
     page.mouse.move(points[0][0], points[0][1])
     page.mouse.down()
     for x, y in points[1:]:
-        page.mouse.move(x, y, steps=20)
+        page.mouse.move(x, y, steps=4)
     page.mouse.up()
-    page.wait_for_timeout(400)
+    page.wait_for_timeout(80)
     if not canvas_has_ink(canvas):
         _dispatch_signature_pad_stroke(canvas, ratios)
-        page.wait_for_timeout(400)
+        page.wait_for_timeout(80)
 
 
 def _click_canvas_with_page_mouse(
@@ -489,26 +549,20 @@ def _recording_consent_click(canvas: Locator) -> None:
     pos_x = min(RECORDED_CONSENT_CANVAS_POS["x"], max(2, box["width"] - 2))
     pos_y = min(RECORDED_CONSENT_CANVAS_POS["y"], max(2, box["height"] - 2))
     canvas.click(position={"x": pos_x, "y": pos_y}, force=True)
-    page.wait_for_timeout(400)
+    page.wait_for_timeout(80)
     if not canvas_has_ink(canvas):
         page.mouse.click(box["x"] + pos_x, box["y"] + pos_y)
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(60)
 
 
 def _sign_one_consent_canvas(page: Page, canvas: Locator) -> bool:
+    stroke_canvas(canvas, INLINE_STROKE_RATIOS, force=True, scroll=False, fast=True)
+    if consent_signature_valid(page):
+        return True
     _recording_consent_click(canvas)
     if consent_signature_valid(page):
         return True
-    stroke_canvas(canvas, INLINE_STROKE_RATIOS, force=True, scroll=False)
-    page.wait_for_timeout(400)
-    if consent_signature_valid(page):
-        return True
-    _dispatch_signature_pad_stroke(canvas, INLINE_STROKE_RATIOS)
-    page.wait_for_timeout(400)
-    if consent_signature_valid(page):
-        return True
-    _commit_signature_stroke(canvas)
-    page.wait_for_timeout(400)
+    stroke_canvas(canvas, INLINE_STROKE_RATIOS, force=True, scroll=False, fast=False)
     return consent_signature_valid(page)
 
 
@@ -522,7 +576,7 @@ def sign_consent_signature(page: Page) -> None:
     clean = region.get_by_role("button", name=re.compile(r"Clean", re.I))
     if clean.count() > 0 and clean.first.is_visible():
         clean.first.click(force=True)
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(100)
 
     canvases = _consent_canvas_locators(page)
     if not canvases:
@@ -536,6 +590,16 @@ def sign_consent_signature(page: Page) -> None:
     if not canvases:
         if _please_sign_here_valid(page):
             return
+        if not _please_sign_here_present(page):
+            return
+        for sel in (
+            ".p-progress-spinner:visible",
+            ".p-blockui:visible",
+            ".p-blockui-document:visible",
+            "app-crm-loading:visible",
+        ):
+            if page.locator(sel).count() > 0:
+                return
         raise AssertionError(
             "Customer Consent 签名区 canvas 不可见（无法进入 SIM 步）"
         )
@@ -566,9 +630,10 @@ class SignatureDialog:
         if confirm is None:
             confirm = self.dialog is not None
         if self.dialog is not None:
-            expect(self.dialog).to_be_visible(timeout=15_000)
+            expect(self.dialog).to_be_visible(timeout=8_000)
+            expect(self.canvas).to_be_attached(timeout=3_000)
         ratios = DIALOG_STROKE_RATIOS if self.dialog is not None else INLINE_STROKE_RATIOS
-        stroke_canvas(self.canvas, ratios)
+        stroke_canvas(self.canvas, ratios, fast=True)
         if not confirm:
             return
         confirm_btn = (

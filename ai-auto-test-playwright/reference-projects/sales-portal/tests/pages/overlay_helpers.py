@@ -1,9 +1,19 @@
 """全站浮层/侧栏清理。"""
 import re
 
-from typing import Any
+from typing import Any, Literal
 
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
+
+PortalModuleKey = Literal["5g-bb", "sim-only", "multi-sim"]
+SIM_ONLY_BROWSE_URL_SUFFIX = (
+    "/sales/sim-only/select-plan?subModule=primary&flowType=BrowseOffer"
+)
+FAMILY_PLAN_BROWSE_URL_SUFFIX = (
+    "/sales/family-plan/select-plan?subModule=primary&flowType=BrowseOffer"
+)
+MULTI_SIM_DRAFT_STORAGE_KEY = "family-plan"
+FAMILY_PLAN_URL_RE = re.compile(r"/sales/family-plan/", re.I)
 
 
 class DepositCartHkidRetry(Exception):
@@ -63,6 +73,126 @@ def bb_browse_listing_visible(page: Page) -> bool:
 
 def can_browse_offers(page: Page) -> bool:
     if not bb_browse_listing_visible(page):
+        return False
+    if pending_payment_visible(page):
+        waiting = page.locator(".flex-body").get_by_text(PENDING_PAYMENT_RE)
+        if waiting.count() > 0 and waiting.first.is_visible():
+            return False
+    return True
+
+
+def sim_only_browse_listing_visible(page: Page) -> bool:
+    """Sim Only 套餐 browse（Featured Monthly Plans，不要求 5G Broadband/HPPRM BB 文案）。"""
+    body = page.locator("body").inner_text()
+    if "Featured Monthly Plans" not in body:
+        return False
+    if _in_offer_configuration(page):
+        return False
+    if is_draft_application_page(page):
+        return False
+    if re.search(r"5G Broadband|HPPRM00000056415G", body, re.I):
+        return False
+    return True
+
+
+def family_plan_browse_listing_visible(page: Page) -> bool:
+    """Multi-SIM / family-plan 套餐 browse（More 列表卡上会出现 PRIMARY SIM，勿用 draft 启发式）。"""
+    if "/family-plan/" not in (page.url or "").lower():
+        return False
+    body = page.locator("body").inner_text()
+    if "Featured Monthly Plans" not in body:
+        return False
+    if _in_offer_configuration(page):
+        return False
+    if re.search(r"5G Broadband|HPPRM00000056415G", body, re.I):
+        return False
+    return True
+
+
+def is_sim_only_order(page: Page) -> bool:
+    """当前订单/路由是否为 Sim Only（SELECT_SIM 等步跳过 IMEI 填写的依据）。"""
+    url = (page.url or "").lower()
+    if "/family-plan/" in url:
+        return False
+    if "/sim-only/" in url:
+        return True
+    try:
+        has_draft = page.evaluate(
+            "() => { const v = localStorage.getItem('sim-only'); return !!(v && v.length); }"
+        )
+        return bool(has_draft)
+    except Exception:
+        return False
+
+
+def is_multi_sim_order(page: Page) -> bool:
+    """当前订单是否为 Multi-SIM（family-plan 路由 / 草稿）。"""
+    url = (page.url or "").lower()
+    if "/family-plan/" in url:
+        return True
+    body = page.locator("body").inner_text()
+    if re.search(r"Multi-SIM|MULTI-LOCATION SHARING", body, re.I):
+        return True
+    if re.search(r"SECONDARY\s+SIM|SIM\s*2", body, re.I):
+        return True
+    try:
+        draft = page.evaluate(
+            "() => localStorage.getItem('family-plan') || ''"
+        )
+        if draft and re.search(r"Multi-SIM|multiSim|MULTI.LOCATION", draft, re.I):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def is_iccid_only_sim_plan(page: Page) -> bool:
+    """Sim Only / Multi-SIM：SELECT_SIM 只填 ICCID，不填 Handset IMEI。"""
+    return is_sim_only_order(page) or is_multi_sim_order(page)
+
+
+def multi_sim_browse_listing_visible(page: Page) -> bool:
+    """Multi-SIM browse（/sales/family-plan/ + 列表含 Multi-SIM 套餐卡）。"""
+    if not family_plan_browse_listing_visible(page):
+        return False
+    body = page.locator("body").inner_text()
+    return bool(re.search(r"Multi-SIM|MULTI-LOCATION SHARING", body, re.I))
+
+
+def assert_multi_sim_family_plan_url(page: Page) -> None:
+    url = page.url or ""
+    if not FAMILY_PLAN_URL_RE.search(url):
+        raise AssertionError(
+            f"期望 Multi-SIM browse 位于 /sales/family-plan/，当前 URL={url!r}"
+        )
+
+
+def assert_multi_sim_browse(page: Page) -> None:
+    assert_multi_sim_family_plan_url(page)
+    if not multi_sim_browse_listing_visible(page):
+        snippet = ""
+        try:
+            snippet = (page.locator("body").inner_text() or "")[:300].replace("\n", " ")
+        except Exception:
+            pass
+        raise AssertionError(
+            "family-plan browse 未出现 Multi-SIM 套餐列表。"
+            f" URL={page.url!r} body≈{snippet!r}"
+        )
+
+
+def can_browse_multi_sim_offers(page: Page) -> bool:
+    if not multi_sim_browse_listing_visible(page):
+        return False
+    if pending_payment_visible(page):
+        waiting = page.locator(".flex-body").get_by_text(PENDING_PAYMENT_RE)
+        if waiting.count() > 0 and waiting.first.is_visible():
+            return False
+    return True
+
+
+def can_browse_sim_only_offers(page: Page) -> bool:
+    if not sim_only_browse_listing_visible(page):
         return False
     if pending_payment_visible(page):
         waiting = page.locator(".flex-body").get_by_text(PENDING_PAYMENT_RE)
@@ -248,6 +378,11 @@ def resolve_deposit_cart_mismatch(page: Page, base_url: str | None = None) -> bo
 
     if deposit_cart_mismatch_visible(page) or cart_amount_looks_stale(page):
         if base_url:
+            url = page.url or ""
+            if "/family-plan/" in url:
+                return clear_stale_multi_sim_draft(page, base_url)
+            if "/sim-only/" in url:
+                return clear_stale_sim_only_draft(page, base_url)
             return clear_stale_5g_bb_draft(page, base_url)
     return True
 
@@ -282,6 +417,74 @@ def _click_footer_cart_amount(page: Page) -> None:
             return
 
 
+def _click_chevron_minimal_scroll(page: Page, chev: Locator) -> None:
+    """已在视口内则直接点，避免反复 scroll_into_view 拉动长表单。"""
+    try:
+        box = chev.bounding_box()
+        vp = page.viewport_size
+        if box and vp:
+            in_view = (
+                box["y"] >= -4
+                and box["y"] + box["height"] <= vp["height"] + 4
+            )
+            if in_view:
+                chev.click(force=True)
+                return
+    except Exception:
+        pass
+    chev.scroll_into_view_if_needed()
+    chev.click(force=True)
+
+
+def click_cart_footer_next_chevron(page: Page) -> bool:
+    """底部购物车金额条右侧 ``>``（Sim Only 选套餐/VAS 后进 SELECT_PHONE 的主入口）。"""
+    dismiss_shop_cart_drawer(page)
+    cart_rows = page.locator("div, footer, section, nav").filter(
+        has=page.locator(".pi-shopping-cart, .pi.pi-shopping-cart")
+    ).filter(has=page.locator(".pi-chevron-right, .pi.pi-chevron-right"))
+    for i in range(cart_rows.count() - 1, -1, -1):
+        row = cart_rows.nth(i)
+        try:
+            if not row.is_visible():
+                continue
+            chev = row.locator(".pi-chevron-right:visible, .pi.pi-chevron-right:visible").last
+            if chev.count() == 0:
+                continue
+            _click_chevron_minimal_scroll(page, chev.first)
+            page.wait_for_load_state("networkidle")
+            return True
+        except Exception:
+            continue
+
+    chevs = page.locator(".pi.pi-chevron-right:visible")
+    bottom = None
+    max_y = -1.0
+    for i in range(chevs.count()):
+        el = chevs.nth(i)
+        try:
+            if not el.is_visible():
+                continue
+            in_carousel = el.evaluate("e => !!e.closest('p-carousel')")
+            if in_carousel:
+                continue
+            in_sidebar = el.evaluate(
+                "e => !!e.closest('.p-sidebar, aside, .h-shop-cart')"
+            )
+            if in_sidebar:
+                continue
+            box = el.bounding_box()
+            if box and box["y"] > max_y:
+                max_y = box["y"]
+                bottom = el
+        except Exception:
+            continue
+    if bottom is not None and max_y >= 300:
+        _click_chevron_minimal_scroll(page, bottom)
+        page.wait_for_load_state("networkidle")
+        return True
+    return False
+
+
 def _click_new_subscription(page: Page) -> None:
     btn = page.get_by_role("button", name=re.compile(r"New Subscription", re.I))
     if btn.count() > 0 and btn.first.is_visible():
@@ -290,12 +493,10 @@ def _click_new_subscription(page: Page) -> None:
         page.wait_for_timeout(400)
 
 
-def clear_stale_5g_bb_draft(page: Page, base_url: str) -> bool:
-    """清除 Step8 待付款草稿（Mongo temporaryOrder/complete + localStorage 5g-bb）。
-
-    源码：草稿存 localStorage['5g-bb']；缺 PAYMENT_TRANSACTION_ID 时 Check Payment Status
-    报 Missing payment or draft order context。无法访问 wwwuat 网关时可走此路径解锁 browse。
-    """
+def clear_stale_module_draft(
+    page: Page, base_url: str, module_key: PortalModuleKey
+) -> bool:
+    """清除 Step8 待付款草稿（Mongo temporaryOrder/complete + localStorage 模块键）。"""
     body = page.locator("body").inner_text()
     stale = (
         "Waiting for payment done" in body
@@ -317,32 +518,69 @@ def clear_stale_5g_bb_draft(page: Page, base_url: str) -> bool:
         api = f"{base_url.rstrip('/')}/api/salesPortal/temporaryOrder/complete"
         page.context.request.post(f"{api}?temporaryOrderId={temp_id}")
 
+    draft_storage_key = (
+        MULTI_SIM_DRAFT_STORAGE_KEY if module_key == "multi-sim" else module_key
+    )
     page.evaluate(
-        """() => {
-          localStorage.removeItem('5g-bb');
+        """(storageKey) => {
+          localStorage.removeItem(storageKey);
           for (const k of Object.keys(localStorage)) {
             if (/payment|draft|PAYMENT|DRAFT|SIM_ONLY|COMPLETE/i.test(k)) {
               localStorage.removeItem(k);
             }
           }
           sessionStorage.clear();
-        }"""
+        }""",
+        draft_storage_key,
     )
-    force_browse_home(page, base_url)
+    if module_key == "sim-only":
+        force_browse_home_sim_only(page, base_url)
+    elif module_key == "multi-sim":
+        back = page.get_by_role("button", name=re.compile(r"Back to index", re.I))
+        if back.count() > 0 and back.first.is_visible():
+            back.first.click(force=True)
+            page.wait_for_load_state("networkidle")
+    else:
+        force_browse_home(page, base_url)
     page.goto(base_url, wait_until="networkidle", timeout=120_000)
-    ok = can_browse_offers(page) and not pending_payment_visible(page)
-    return ok
+    if module_key == "sim-only":
+        browse_ok = can_browse_sim_only_offers(page)
+    elif module_key == "multi-sim":
+        browse_ok = can_browse_multi_sim_offers(page)
+    else:
+        browse_ok = can_browse_offers(page)
+    return browse_ok and not pending_payment_visible(page)
 
 
-def force_browse_home(page: Page, base_url: str) -> None:
-    """强制回到 browse 套餐列表（避免侧栏恢复未完成 Step8 草稿）。"""
-    browse_url = f"{base_url.rstrip('/')}/sales/sim-only/select-plan?subModule=primary&flowType=BrowseOffer"
+def clear_stale_5g_bb_draft(page: Page, base_url: str) -> bool:
+    """清除 5G BB 模块 Step8 待付款草稿。"""
+    return clear_stale_module_draft(page, base_url, "5g-bb")
+
+
+def clear_stale_sim_only_draft(page: Page, base_url: str) -> bool:
+    """清除 Sim Only 模块 Step8 待付款草稿。"""
+    return clear_stale_module_draft(page, base_url, "sim-only")
+
+
+def clear_stale_multi_sim_draft(page: Page, base_url: str) -> bool:
+    """清除 Multi-SIM 模块 Step8 待付款草稿。"""
+    return clear_stale_module_draft(page, base_url, "multi-sim")
+
+
+def force_browse_home_sim_only(page: Page, base_url: str) -> None:
+    """强制回到 Sim Only browse 套餐列表。"""
+    browse_url = f"{base_url.rstrip('/')}{SIM_ONLY_BROWSE_URL_SUFFIX}"
     back = page.get_by_role("button", name=re.compile(r"Back to index", re.I))
     if back.count() > 0 and back.first.is_visible():
         back.first.click(force=True)
         page.wait_for_load_state("networkidle")
     page.goto(browse_url, wait_until="networkidle", timeout=120_000)
     _click_new_subscription(page)
+
+
+def force_browse_home(page: Page, base_url: str) -> None:
+    """强制回到 browse 套餐列表（历史行为：sim-only URL，5G BB 用例仍依赖此路径）。"""
+    force_browse_home_sim_only(page, base_url)
 
 
 def clear_pending_payment_order(page: Page, base_url: str) -> None:

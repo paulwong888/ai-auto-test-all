@@ -4,14 +4,28 @@ import re
 from playwright.sync_api import Page, expect
 
 from conftest import BASE_URL
-from data.offer_factory import get_offer
+from data.offer_factory import (
+    get_multi_sim_choose_one_vas,
+    get_multi_sim_offer,
+    get_offer,
+    get_sim_only_choose_one_vas,
+    get_sim_only_offer,
+)
+from pages.order_application_page import OrderApplicationPage
 from pages.overlay_helpers import (
+    SIM_ONLY_BROWSE_URL_SUFFIX,
     bb_browse_listing_visible,
     can_browse_offers,
     exit_draft_application_to_browse,
+    assert_multi_sim_browse,
+    assert_multi_sim_family_plan_url,
+    family_plan_browse_listing_visible,
     force_browse_home,
+    force_browse_home_sim_only,
     has_bb_offer_listing,
+    multi_sim_browse_listing_visible,
     pending_payment_visible,
+    sim_only_browse_listing_visible,
     _click_new_subscription,
     _in_offer_configuration,
     _try_back_to_browse_from_payment_wait,
@@ -84,6 +98,383 @@ class ProductListingPage:
         self._open_header_menu()
         self._sidebar_link("5G HBB").click()
         self.page.wait_for_load_state("networkidle")
+
+    def _click_sim_only_in_sidebar(self) -> None:
+        """侧栏 SIM Plan → Sim Only（菜单文案因 i18n/权限可能为 Sim Only / SIM Only）。"""
+        self._open_header_menu()
+        for parent_label in (r"SIM Plan", r"Sim Plan", r"SIM\s*Plan"):
+            parent = self.sidebar.get_by_text(re.compile(parent_label, re.I))
+            if parent.count() > 0:
+                try:
+                    parent.first.click()
+                    self.page.wait_for_timeout(400)
+                except Exception:
+                    pass
+        for child in (
+            self.sidebar.locator("a").filter(has_text=re.compile(r"Sim Only", re.I)),
+            self.sidebar.get_by_text(re.compile(r"^Sim Only$", re.I)),
+            self.sidebar.locator("a").filter(has_text=re.compile(r"sim-only", re.I)),
+        ):
+            if child.count() > 0:
+                try:
+                    if child.first.is_visible():
+                        child.first.click()
+                        self.page.wait_for_load_state("networkidle")
+                        self._dismiss_sidebar_mask()
+                        return
+                except Exception:
+                    continue
+        browse_url = f"{BASE_URL.rstrip('/')}{SIM_ONLY_BROWSE_URL_SUFFIX}"
+        self.page.goto(browse_url, wait_until="networkidle", timeout=120_000)
+        self._dismiss_sidebar_mask()
+
+    def navigate_sim_only_recorded(self) -> None:
+        """进入 Sim Only browse 列表（侧栏优先，失败则 URL）。"""
+        if sim_only_browse_listing_visible(self.page):
+            _click_new_subscription(self.page)
+            self._select_sim_only_more_tab()
+            return
+        for _ in range(2):
+            self._click_sim_only_in_sidebar()
+            self.page.wait_for_load_state("networkidle")
+            if sim_only_browse_listing_visible(self.page):
+                self._select_sim_only_more_tab()
+                return
+            force_browse_home_sim_only(self.page, BASE_URL)
+        expect(
+            self.page.get_by_text("Featured Monthly Plans", exact=False).first
+        ).to_be_visible(timeout=15_000)
+        self._select_sim_only_more_tab()
+
+    def _select_sim_only_more_tab(self) -> None:
+        """Sim Only 默认 Hot Pick；自动化选套餐需先点 **More** 展开完整列表。"""
+        self._dismiss_sidebar_mask()
+        expect(
+            self.page.get_by_text("Featured Monthly Plans", exact=False).first
+        ).to_be_visible(timeout=15_000)
+
+        more_tab = self.page.locator(".promotion-view-option").filter(
+            has_text=re.compile(r"^More$", re.I)
+        )
+        if more_tab.count() == 0:
+            more_tab = self.page.get_by_text("More", exact=True)
+
+        if more_tab.count() == 0:
+            return
+
+        tab = more_tab.first
+        expect(tab).to_be_visible(timeout=10_000)
+        cls = tab.get_attribute("class") or ""
+        if "active" not in cls.split():
+            tab.click()
+            self.page.wait_for_load_state("networkidle")
+            self.page.wait_for_timeout(800)
+
+        active_carousel = self.page.locator(".p-carousel-item-active .box")
+        list_boxes = self.page.locator(
+            ".promotions-list-container .box, app-new-promotion-list .box"
+        )
+        try:
+            if active_carousel.count() > 0:
+                expect(active_carousel.first).to_be_visible(timeout=20_000)
+            elif list_boxes.count() > 0:
+                expect(list_boxes.first).to_be_visible(timeout=20_000)
+        except AssertionError:
+            pass
+
+    def _expand_sim_only_promotion_list(self) -> None:
+        """Sim Only：确保在 More 视图（非默认 Hot Pick）。"""
+        self._select_sim_only_more_tab()
+
+    def _sim_only_offer_cards(self):
+        return self.page.locator(
+            ".promotions-list-container .box, p-carousel .box, app-new-promotion-list .box"
+        )
+
+    def _wait_sim_only_price_loaded(self) -> None:
+        loading = self.page.get_by_text(re.compile(r"Loading price", re.I))
+        try:
+            if loading.count() > 0 and loading.first.is_visible():
+                expect(loading.first).to_be_hidden(timeout=60_000)
+        except Exception:
+            self.page.wait_for_timeout(1500)
+
+    def _sim_only_choose_one_visible(self) -> bool:
+        marker = self.page.get_by_text(re.compile(r"Choo?se\s*1", re.I))
+        if marker.count() == 0:
+            return False
+        try:
+            return marker.first.is_visible()
+        except Exception:
+            return False
+
+    def _select_sim_only_choose_one_vas(self) -> None:
+        """Sim Only 选套餐后「Choose 1」必选一项（SIT 常见 Handset Switch Lite）。"""
+        if not self._sim_only_choose_one_visible():
+            return
+        vas_label = get_sim_only_choose_one_vas()
+        if not vas_label:
+            return
+        pattern = re.compile(re.escape(vas_label), re.I)
+        short = re.compile(r"Handset Switch Lite", re.I)
+
+        for name_re in (pattern, short):
+            radio = self.page.get_by_role("radio", name=name_re)
+            if radio.count() > 0:
+                target = radio.first
+                try:
+                    if target.is_visible():
+                        target.check(force=True)
+                        self._wait_sim_only_price_loaded()
+                        return
+                except Exception:
+                    target.click(force=True)
+                    self._wait_sim_only_price_loaded()
+                    return
+
+        section = self.page.locator(".flex-body").filter(
+            has=self.page.get_by_text(re.compile(r"Choo?se\s*1", re.I))
+        )
+        scope = section.first if section.count() > 0 else self.page.locator(".flex-body").first
+        for text_re in (pattern, short):
+            option = scope.get_by_text(text_re)
+            for i in range(option.count()):
+                hit = option.nth(i)
+                try:
+                    if not hit.is_visible():
+                        continue
+                    hit.scroll_into_view_if_needed()
+                    hit.click(force=True)
+                    self._wait_sim_only_price_loaded()
+                    return
+                except Exception:
+                    continue
+            rb = scope.locator("p-radiobutton, .p-radiobutton").filter(has_text=text_re)
+            if rb.count() > 0:
+                rb.first.click(force=True)
+                self._wait_sim_only_price_loaded()
+                return
+
+        raise AssertionError(
+            f"Sim Only「Choose 1」可见但未选中 VAS：{vas_label!r}。"
+            "可设置 SALES_PORTAL_SIM_ONLY_CHOOSE_ONE_VAS。"
+        )
+
+    def _finalize_sim_only_offer_selection(self) -> None:
+        self._wait_sim_only_price_loaded()
+        self._select_sim_only_choose_one_vas()
+
+    def _advance_sim_only_select_plan_step(self) -> None:
+        """选套餐 + Choose 1 后立即点底部购物车旁 ``>`` 到 SELECT_PHONE。"""
+        OrderApplicationPage(self.page).next_step()
+
+    def _done_sim_only_offer(self, *, advance: bool) -> None:
+        self._finalize_sim_only_offer_selection()
+        if advance:
+            self._advance_sim_only_select_plan_step()
+
+    def select_sim_only_offer(self, *, advance: bool = True) -> None:
+        """Sim Only：选套餐卡 → Choose 1 VAS → 默认马上 next_step。"""
+        self._dismiss_sidebar_mask()
+        self._expand_sim_only_promotion_list()
+        key = get_sim_only_offer().get("key", "").strip()
+        if key:
+            for loc in (
+                self._sim_only_offer_cards().filter(has_text=key),
+                self.page.locator(".box").filter(has_text=key),
+            ):
+                if loc.count() > 0:
+                    target = loc.first
+                    expect(target).to_be_visible(timeout=15_000)
+                    target.scroll_into_view_if_needed()
+                    if "selected" not in (target.get_attribute("class") or ""):
+                        target.click(force=True)
+                    self._done_sim_only_offer(advance=advance)
+                    return
+        active = self.page.locator(".p-carousel-item-active .box")
+        if active.count() > 0:
+            target = active.first
+            expect(target).to_be_visible(timeout=15_000)
+            target.scroll_into_view_if_needed()
+            if "selected" not in (target.get_attribute("class") or ""):
+                target.click(force=True)
+            self._done_sim_only_offer(advance=advance)
+            return
+        cards = self._sim_only_offer_cards()
+        if cards.count() > 0:
+            target = cards.first
+            expect(target).to_be_visible(timeout=15_000)
+            target.scroll_into_view_if_needed()
+            if "selected" not in (target.get_attribute("class") or ""):
+                target.click(force=True)
+            self._done_sim_only_offer(advance=advance)
+            return
+        for pattern in (
+            re.compile(r"\$\s*\d+\s*/\s*Month", re.I),
+            re.compile(r"HPPRM\S+", re.I),
+        ):
+            loc = self.page.get_by_text(pattern)
+            if loc.count() > 0:
+                try:
+                    hit = loc.first
+                    hit.scroll_into_view_if_needed()
+                    hit.click(force=True)
+                    self._done_sim_only_offer(advance=advance)
+                    return
+                except Exception:
+                    pass
+        raise AssertionError(
+            "Sim Only browse 未找到可选套餐卡（promotion .box）。"
+            "可设置 SALES_PORTAL_SIM_ONLY_OFFER_KEY 或检查 SIT 目录。"
+        )
+
+    def _click_multi_sim_in_sidebar(self) -> None:
+        """菜单：先点 Monthly Plan，再点 Multi-SIM Plan → /sales/family-plan/ browse。"""
+        self._dismiss_sidebar_mask()
+        url = (self.page.url or "").lower()
+        if "family-plan" not in url or "select-plan" not in url:
+            back = self.page.get_by_role("button", name=re.compile(r"Back to index", re.I))
+            if back.count() > 0 and back.first.is_visible():
+                back.first.click(force=True)
+                self.page.wait_for_load_state("networkidle")
+                self.page.wait_for_timeout(400)
+
+        self._open_header_menu()
+        monthly_re = re.compile(r"Monthly Plan", re.I)
+        monthly = self.sidebar.locator("a").filter(has_text=monthly_re)
+        if monthly.count() == 0:
+            monthly = self.sidebar.get_by_text(monthly_re)
+        expect(monthly.first).to_be_visible(timeout=15_000)
+        try:
+            monthly.first.click()
+        except Exception:
+            monthly.first.click(force=True)
+        self.page.wait_for_timeout(500)
+
+        multi_re = re.compile(r"Multi-SIM Plan", re.I)
+        multi = self.sidebar.locator("a").filter(has_text=multi_re)
+        if multi.count() == 0:
+            multi = self.sidebar.get_by_text(multi_re)
+        if multi.count() == 0:
+            multi = self.sidebar.locator("a").filter(has_text=re.compile(r"Multi-SIM", re.I))
+        expect(multi.first).to_be_visible(timeout=15_000)
+        try:
+            multi.first.click()
+        except Exception:
+            multi.first.click(force=True)
+        self.page.wait_for_load_state("networkidle")
+        self._dismiss_sidebar_mask()
+        assert_multi_sim_family_plan_url(self.page)
+
+    def navigate_multi_sim_recorded(self) -> None:
+        """进入 Multi-SIM browse（仅侧栏；路由不对则报错，无 goto fallback）。"""
+        if multi_sim_browse_listing_visible(self.page):
+            _click_new_subscription(self.page)
+            self._select_sim_only_more_tab()
+            assert_multi_sim_browse(self.page)
+            return
+        self._click_multi_sim_in_sidebar()
+        self.page.wait_for_load_state("networkidle")
+        if not family_plan_browse_listing_visible(self.page):
+            raise AssertionError(
+                "Multi-SIM family-plan browse 未出现 Featured Monthly Plans。"
+                f" URL={self.page.url!r}"
+            )
+        self._select_sim_only_more_tab()
+        assert_multi_sim_browse(self.page)
+
+    def _select_multi_sim_choose_one_vas(self) -> None:
+        if not self._sim_only_choose_one_visible():
+            return
+        vas_label = get_multi_sim_choose_one_vas()
+        if not vas_label:
+            return
+        pattern = re.compile(re.escape(vas_label), re.I)
+        short = re.compile(r"Handset Switch Lite", re.I)
+        for name_re in (pattern, short):
+            radio = self.page.get_by_role("radio", name=name_re)
+            if radio.count() > 0:
+                target = radio.first
+                try:
+                    if target.is_visible():
+                        target.check(force=True)
+                        self._wait_sim_only_price_loaded()
+                        return
+                except Exception:
+                    target.click(force=True)
+                    self._wait_sim_only_price_loaded()
+                    return
+        section = self.page.locator(".flex-body").filter(
+            has=self.page.get_by_text(re.compile(r"Choo?se\s*1", re.I))
+        )
+        scope = section.first if section.count() > 0 else self.page.locator(".flex-body").first
+        for text_re in (pattern, short):
+            option = scope.get_by_text(text_re)
+            for i in range(option.count()):
+                hit = option.nth(i)
+                try:
+                    if not hit.is_visible():
+                        continue
+                    hit.scroll_into_view_if_needed()
+                    hit.click(force=True)
+                    self._wait_sim_only_price_loaded()
+                    return
+                except Exception:
+                    continue
+        raise AssertionError(
+            f"Multi-SIM「Choose 1」可见但未选中 VAS：{vas_label!r}。"
+            "可设置 SALES_PORTAL_MULTI_SIM_CHOOSE_ONE_VAS。"
+        )
+
+    def _finalize_multi_sim_offer_selection(self) -> None:
+        self._wait_sim_only_price_loaded()
+        self._select_multi_sim_choose_one_vas()
+
+    def _done_multi_sim_offer(self, *, advance: bool) -> None:
+        self._finalize_multi_sim_offer_selection()
+        if advance:
+            self._advance_sim_only_select_plan_step()
+
+    def select_multi_sim_offer(self, *, advance: bool = True) -> None:
+        """Multi-SIM：选套餐卡 → Choose 1 VAS → 默认 next_step。"""
+        self._dismiss_sidebar_mask()
+        self._expand_sim_only_promotion_list()
+        key = get_multi_sim_offer().get("key", "").strip()
+        if key:
+            for loc in (
+                self._sim_only_offer_cards().filter(has_text=key),
+                self.page.locator(".box").filter(has_text=key),
+            ):
+                if loc.count() > 0:
+                    target = loc.first
+                    expect(target).to_be_visible(timeout=15_000)
+                    target.scroll_into_view_if_needed()
+                    if "selected" not in (target.get_attribute("class") or ""):
+                        target.click(force=True)
+                    self._done_multi_sim_offer(advance=advance)
+                    return
+        active = self.page.locator(".p-carousel-item-active .box")
+        if active.count() > 0:
+            target = active.first
+            expect(target).to_be_visible(timeout=15_000)
+            target.scroll_into_view_if_needed()
+            if "selected" not in (target.get_attribute("class") or ""):
+                target.click(force=True)
+            self._done_multi_sim_offer(advance=advance)
+            return
+        cards = self._sim_only_offer_cards()
+        if cards.count() > 0:
+            target = cards.first
+            expect(target).to_be_visible(timeout=15_000)
+            target.scroll_into_view_if_needed()
+            if "selected" not in (target.get_attribute("class") or ""):
+                target.click(force=True)
+            self._done_multi_sim_offer(advance=advance)
+            return
+        raise AssertionError(
+            "Multi-SIM browse 未找到可选套餐卡。"
+            "可设置 SALES_PORTAL_MULTI_SIM_OFFER_KEY 或检查 SIT 目录。"
+        )
 
     def navigate_5g_bb_recorded(self) -> None:
         """进入 5G BB 列表（录制意图：HBB → BB；实现走侧栏展开，避免全局 a 定位超时）。"""

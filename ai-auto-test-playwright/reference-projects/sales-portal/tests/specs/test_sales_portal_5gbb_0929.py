@@ -43,6 +43,7 @@ from pages.overlay_helpers import (
     resolve_deposit_cart_mismatch,
     _click_new_subscription,
 )
+from pages.fortress_shop_page import FortressShopPage
 from pages.payment_method_page import PaymentMethodPage
 from pages.payment_page import PaymentPage
 from pages.payment_result_page import PaymentResultPage
@@ -153,7 +154,7 @@ class TestSalesPortal5GBB0929:
         payment.fill_name_on_card()
         payment.fill_expiration()
         check_deposit_or_raise_hkid_retry(page, BASE_URL)
-        payment.sign_inline()
+        payment.advance_after_payment_signature()
         return order, kyc
 
     def _wizard_through_sim_with_hkid_retry(
@@ -285,7 +286,10 @@ class TestSalesPortal5GBB0929:
         OrderApplicationPage(page).fill_second_agent_if_required()
         order, kyc, sim = self._wizard_through_sim_with_hkid_retry(page)
 
+        from conftest import recover_portal_session_if_needed
+
         order.next_step()
+        recover_portal_session_if_needed(page)
         pm = PaymentMethodPage(page)
         pm.expect_on_step()
         pm.pick_direct_sale_payment()
@@ -294,6 +298,27 @@ class TestSalesPortal5GBB0929:
 
         step8 = Step8CompletePage(page)
         step8.complete_direct_sale_via_status_check()
+        PaymentResultPage(page).back_to_index()
+
+        expect(page.locator("app-new-header")).to_be_visible(timeout=30_000)
+        self._mark_pool_usage(kyc, sim)
+
+    @pytest.mark.smoke
+    def test_tc100_5gbb_fortress_payment(self, logged_in_page_fortress: Page) -> None:
+        page = logged_in_page_fortress
+        self._reach_offer(ProductListingPage(page))
+        FortressShopPage(page).prepare_after_select_offer()
+        order, kyc, sim = self._wizard_through_sim_with_hkid_retry(page)
+
+        order.next_step()
+        pm = PaymentMethodPage(page)
+        pm.expect_on_step()
+        pm.pick_fortress_payment()
+        order.next_step()
+        self._assert_no_gateway_popup(page)
+
+        step8 = Step8CompletePage(page)
+        step8.complete_fortress_via_status_check()
         PaymentResultPage(page).back_to_index()
 
         expect(page.locator("app-new-header")).to_be_visible(timeout=30_000)

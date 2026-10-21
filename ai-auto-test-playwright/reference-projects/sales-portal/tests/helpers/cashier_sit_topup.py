@@ -19,14 +19,27 @@ DEFAULT_TOPUP_URL = (
 
 _CAPTURES: dict[int, dict[str, Any] | None] = {}
 
-# Angular SimOnlyStorageService：键写在 localStorage[module].common 下（如 5g-bb），非顶层 key。
+# Angular：PAYMENT_* / DRAFT_* 多在 localStorage[module].common（5g-bb、sim-only、family-plan 等）。
 _READ_STORAGE_KEY_JS = """(key) => {
   const direct = localStorage.getItem(key) || sessionStorage.getItem(key);
   if (direct) return direct;
-  const modules = [
+  const prefer = [
+    'family-plan', 'sim-only', 'multi-sim',
     '5g-bb', '5g-bb-taihing', '5g-bb-hsbc', '5g-bb-in-base', '5g-bb-hos',
   ];
-  for (const mod of modules) {
+  const seen = new Set();
+  const keys = [];
+  for (const mod of prefer) {
+    if (localStorage.getItem(mod)) {
+      keys.push(mod);
+      seen.add(mod);
+    }
+  }
+  for (let i = 0; i < localStorage.length; i++) {
+    const mod = localStorage.key(i);
+    if (mod && !seen.has(mod)) keys.push(mod);
+  }
+  for (const mod of keys) {
     const raw = localStorage.getItem(mod);
     if (!raw) continue;
     try {
@@ -64,7 +77,8 @@ def install_payment_txn_capture(page: Page) -> None:
         try:
             if response.request.method != "POST":
                 return
-            if "onlinePayment" not in response.url:
+            url = (response.url or "").lower()
+            if "onlinepayment" not in url and "payment" not in url:
                 return
             if response.status not in (200, 201):
                 return
@@ -72,7 +86,16 @@ def install_payment_txn_capture(page: Page) -> None:
             if not isinstance(body, dict):
                 return
             data = body.get("data")
-            if isinstance(data, dict):
+            if not isinstance(data, dict):
+                return
+            if data.get("cashierPayments"):
+                _CAPTURES[key] = data
+                return
+            if _CAPTURES[key] is None and (
+                data.get("transactionId")
+                or data.get("paymentTransactionId")
+                or data.get("paymentAmount") is not None
+            ):
                 _CAPTURES[key] = data
         except Exception:
             pass
@@ -103,7 +126,7 @@ def read_payment_transaction_id(page: Page) -> str | None:
 
 
 def read_draft_order_id(page: Page) -> str | None:
-    for key in ("SIM_ONLY_DRAFT_ORDER_ID", "DRAFT_ORDER_ID"):
+    for key in ("MULTI_SIM_DRAFT_ORDER_ID", "SIM_ONLY_DRAFT_ORDER_ID", "DRAFT_ORDER_ID"):
         raw = page.evaluate(_READ_STORAGE_KEY_JS, key)
         parsed = _parse_storage_value(raw)
         if parsed:
@@ -184,8 +207,10 @@ def build_topup_payload(page: Page) -> list[dict[str, Any]]:
     if not info or not merchant_tran_id:
         raise AssertionError(
             "无法解析 topup 的 info / merchantTranId；"
-            "需 createTxn 响应含 cashierPayments，或 localStorage 有 SIM_ONLY_DRAFT_ORDER_ID，"
-            "或设置 SALES_PORTAL_TOPUP_INFO / SALES_PORTAL_TOPUP_MERCHANT_TRAN_ID"
+            "需 createTxn 响应含 cashierPayments，或 localStorage（含 family-plan.common）"
+            "有 MULTI_SIM_DRAFT_ORDER_ID / SIM_ONLY_DRAFT_ORDER_ID，"
+            "或设置 SALES_PORTAL_TOPUP_INFO / SALES_PORTAL_TOPUP_MERCHANT_TRAN_ID。"
+            f" draft={draft!r} captured_cashier={bool((captured or {}).get('cashierPayments'))}"
         )
 
     grant = _resolve_grant_amount(page, captured)
@@ -276,7 +301,7 @@ def wait_for_payment_transaction_id(page: Page, *, timeout_ms: int = 60_000) -> 
         page.wait_for_timeout(500)
     raise AssertionError(
         f"{timeout_ms}ms 内未读到 PAYMENT_TRANSACTION_ID"
-        "（已查顶层 localStorage、5g-bb.common 与 onlinePayment 响应）"
+        "（已查顶层 localStorage、各 module.common 与 payment 响应）"
     )
 
 

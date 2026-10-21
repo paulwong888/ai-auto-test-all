@@ -3,8 +3,8 @@ import re
 
 from playwright.sync_api import Page, expect
 
-from data.account_factory import get_second_agent_name
-from pages.overlay_helpers import dismiss_shop_cart_drawer
+from data.account_factory import POS_ACCOUNT_DIRECT_SALES, get_pos_account, get_second_agent_name
+from pages.overlay_helpers import click_cart_footer_next_chevron, dismiss_shop_cart_drawer
 
 SECOND_AGENT_LABEL_RE = re.compile(r"^Second Agent$", re.I)
 SECOND_AGENT_REQUIRED_RE = re.compile(
@@ -18,6 +18,8 @@ class OrderApplicationPage:
 
     def next_step(self) -> None:
         dismiss_shop_cart_drawer(self.page)
+        if click_cart_footer_next_chevron(self.page):
+            return
         chev = self.page.locator(".flex-body .pi.pi-chevron-right:visible").first
         if chev.count() == 0:
             chev = self.page.locator(".pi.pi-chevron-right:visible").first
@@ -58,8 +60,13 @@ class OrderApplicationPage:
                 continue
 
     def fill_second_agent_if_required(self, name: str | None = None) -> None:
-        """Direct Sales 部门（如 CRM-PAULHP-SDIR）申请单必填 Second Agent。"""
+        """Direct Sales 部门（CRM-AUTOTEST-SDIR）申请单必填 Second Agent。"""
         dismiss_shop_cart_drawer(self.page)
+        required_hint = self.page.get_by_text(SECOND_AGENT_REQUIRED_RE)
+        sdir = get_pos_account().upper() == POS_ACCOUNT_DIRECT_SALES.upper()
+        if not sdir:
+            if required_hint.count() == 0 or not required_hint.first.is_visible():
+                return
         self._expand_second_agent_section()
         value = (name or get_second_agent_name()).strip()
         field = self.page.get_by_label(SECOND_AGENT_LABEL_RE)
@@ -68,7 +75,7 @@ class OrderApplicationPage:
                 'input[formcontrolname="secondAgent"], input[formControlName="secondAgent"]'
             )
         if field.count() == 0:
-            if self.page.get_by_text(SECOND_AGENT_REQUIRED_RE).count() == 0:
+            if required_hint.count() == 0:
                 return
             raise AssertionError(
                 "页面提示 Second Agent 必填，但未找到输入框；请检查 Portal agent 手风琴是否展开。"
@@ -80,11 +87,25 @@ class OrderApplicationPage:
         except Exception:
             pass
         try:
+            if not input_el.is_visible():
+                if required_hint.count() == 0 or not required_hint.first.is_visible():
+                    return
+        except Exception:
+            if not sdir:
+                return
+        try:
             if input_el.input_value().strip():
                 return
         except Exception:
             pass
-        expect(input_el).to_be_visible(timeout=15_000)
+        try:
+            expect(input_el).to_be_visible(timeout=5_000)
+        except AssertionError:
+            if required_hint.count() == 0 or not required_hint.first.is_visible():
+                return
+            raise AssertionError(
+                "Second Agent 输入框不可见；请确认 POS 为 SDIR 且仍在申请长表单。"
+            ) from None
         input_el.fill(value)
-        input_el.blur()
+        input_el.press("Tab")
         self.page.wait_for_timeout(300)

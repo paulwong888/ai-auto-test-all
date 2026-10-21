@@ -30,6 +30,11 @@ fi
 
 docker cp "${SRC}/." "${CONTAINER}:${DEST}/"
 
+# docker cp 不会删除 Worker 上已移除的文件；显式清理已下线的 spec
+if [[ ! -f "${SRC}/specs/test_sales_portal.py" ]]; then
+  docker exec "$CONTAINER" rm -f "${DEST}/specs/test_sales_portal.py"
+fi
+
 if [[ -n "${HKID_USED_BACKUP}" ]]; then
   echo "${HKID_USED_BACKUP}" | docker exec -i "$CONTAINER" tee "${STATE_DIR}/hkid_used.json" >/dev/null
 fi

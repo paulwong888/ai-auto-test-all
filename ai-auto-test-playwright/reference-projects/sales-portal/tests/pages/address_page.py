@@ -3,9 +3,16 @@ import re
 
 from playwright.sync_api import Locator, Page, expect
 
-from data.address_factory import get_autocomplete_suggestion, get_flat, get_street_text
+from data.address_factory import (
+    get_autocomplete_suggestion,
+    get_flat,
+    get_street_search_query,
+    get_street_text,
+)
 
 BILLING_SECTION_RE = re.compile(r"Billing Address", re.I)
+CONTACT_SECTION_RE = re.compile(r"Contact Information", re.I)
+STREET_NAME_SEARCH_RE = re.compile(r"Street name to search", re.I)
 
 
 class AddressPage:
@@ -21,6 +28,119 @@ class AddressPage:
             return False
         return region.first.get_by_role("textbox", name="Street/Estate").count() > 0
 
+    def _address_root(self) -> Locator:
+        for region_name in (BILLING_SECTION_RE, CONTACT_SECTION_RE):
+            region = self.page.get_by_role("region", name=region_name)
+            if region.count() > 0:
+                return region.first
+        return self.page.locator(".flex-body").first
+
+    def _street_name_search_input(self) -> Locator | None:
+        """Street name to search / 录制 undefined 联想输入。"""
+        for loc in (
+            self.page.get_by_placeholder(STREET_NAME_SEARCH_RE),
+            self.page.get_by_role("textbox", name=STREET_NAME_SEARCH_RE),
+        ):
+            if loc.count() > 0:
+                try:
+                    if loc.first.is_visible():
+                        return loc.first
+                except Exception:
+                    return loc.first
+
+        root = self._address_root()
+        for inp in root.locator("p-autocomplete input, .p-autocomplete input").all():
+            try:
+                if not inp.is_visible():
+                    continue
+                ph = (inp.get_attribute("placeholder") or "").lower()
+                aria = (inp.get_attribute("aria-label") or "").lower()
+                if "street" in ph and "search" in ph:
+                    return inp
+                if "street" in aria and "search" in aria:
+                    return inp
+            except Exception:
+                continue
+
+        undefined = self.page.locator('input[name="undefined"]:visible')
+        if undefined.count() > 0:
+            return undefined.first
+        return None
+
+    def _has_street_name_search_ui(self) -> bool:
+        inp = self._street_name_search_input()
+        if inp is None:
+            return False
+        try:
+            return inp.is_visible()
+        except Exception:
+            return True
+
+    def _pick_first_autocomplete_option(self, root: Locator) -> None:
+        panel_selectors = (
+            ".p-autocomplete-panel:visible",
+            "[role='listbox']:visible",
+            ".p-autocomplete-items:visible",
+        )
+        for sel in panel_selectors:
+            panel = self.page.locator(sel)
+            if panel.count() == 0:
+                continue
+            for opt_sel in (
+                "[role='option']",
+                ".p-autocomplete-item",
+                "li",
+            ):
+                opts = panel.first.locator(opt_sel)
+                for i in range(min(opts.count(), 12)):
+                    item = opts.nth(i)
+                    try:
+                        if item.is_visible():
+                            item.click(timeout=3_000)
+                            self.page.wait_for_load_state("networkidle")
+                            return
+                    except Exception:
+                        continue
+
+        opts = self.page.get_by_role("option")
+        if opts.count() > 0:
+            opts.first.click(timeout=3_000)
+            self.page.wait_for_load_state("networkidle")
+            return
+
+        self._pick_address_suggestion(root)
+
+    def fill_street_name_to_search(self) -> None:
+        """Contact Mobile 后：Street name to search 填 1（可 env）+ 联想第一项。"""
+        self._expand_billing_accordion()
+        search = self._street_name_search_input()
+        if search is None:
+            raise AssertionError("未找到 Street name to search 地址联想输入框")
+        query = get_street_search_query()
+        search.scroll_into_view_if_needed()
+        search.click()
+        search.fill("")
+        search.fill(query)
+        self.page.wait_for_timeout(600)
+        root = self._address_root()
+        self._pick_first_autocomplete_option(root)
+        print(f"[address] street search query={query!r} picked first suggestion")
+
+    def _fill_block_floor_room(self, root: Locator | None = None) -> None:
+        flat = get_flat()
+        scope = root if root is not None and root.count() > 0 else self._address_root()
+        building = scope.get_by_role("textbox", name="Building")
+        if building.count() > 0 and building.first.is_visible():
+            if not (building.first.input_value() or "").strip():
+                building.first.fill("BLOCK A")
+        for label, key in (("Block", "block"), ("Floor", "floor"), ("Room", "room")):
+            box = scope.get_by_role("textbox", name=label)
+            if box.count() == 0:
+                continue
+            expect(box.first).to_be_visible(timeout=10_000)
+            box.first.click()
+            box.first.fill(flat[key])
+
     def _expand_billing_accordion(self) -> None:
         btn = self.page.get_by_role("button", name=BILLING_SECTION_RE)
         if btn.count() > 0:
@@ -31,7 +151,9 @@ class AddressPage:
             except Exception:
                 btn.first.click(force=True)
                 self.page.wait_for_timeout(400)
-        self._billing_region().scroll_into_view_if_needed()
+        region = self.page.get_by_role("region", name=BILLING_SECTION_RE)
+        if region.count() > 0:
+            region.first.scroll_into_view_if_needed()
 
     def _pick_address_suggestion(self, root: Locator) -> None:
         """录制：点联想项；SIT 文案可能与 0929 略有差异。"""
@@ -130,7 +252,12 @@ class AddressPage:
         self._fill_address_legacy_nth(field_set_index=0)
 
     def fill_all(self) -> None:
-        """5G BB：Billing Address + No Address Proof（录制 0929 数据）。"""
+        """Billing / Street search + Block/Floor/Room + No Address Proof。"""
+        if self._has_street_name_search_ui():
+            self.fill_street_name_to_search()
+            self._fill_block_floor_room()
+            self.pick_no_address_proof()
+            return
         self.fill_billing_address_recorded()
         self.pick_no_address_proof()
 

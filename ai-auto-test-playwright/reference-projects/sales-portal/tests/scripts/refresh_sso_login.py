@@ -57,7 +57,7 @@ def main() -> int:
 
         context.storage_state(path=str(AUTH_FILE))
         body = page.locator("body").inner_text()
-        print(f"[refresh] auth saved; POS={get_pos_account()}; paulhp={'paulhp' in body.lower()}")
+        print(f"[refresh] auth saved; POS={get_pos_account()}; user={body.lower()[:80]!r}")
         browser.close()
     return 0
 

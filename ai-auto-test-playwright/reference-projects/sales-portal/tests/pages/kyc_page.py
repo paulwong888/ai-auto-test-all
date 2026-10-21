@@ -3,7 +3,7 @@ import re
 
 from playwright.sync_api import Page, expect
 
-from data.kyc_factory import get_mobile, get_test_hkid
+from data.kyc_factory import get_contact_mobile, get_mobile, get_test_hkid
 from data.upload_factory import get_hkid_image
 from pages.overlay_helpers import (
     KycOcrHkidRetry,
@@ -23,7 +23,6 @@ class KycPage:
         self.hkid_upload = page.locator("#hkIdUpload")
         self.credit_check_button = page.get_by_role("button", name="Credit Check").first
         self.contact_mobile = page.get_by_role("textbox", name="Contact Mobile").first
-        self.verify_button = page.get_by_role("button", name="Verify").first
 
     def _personal_region(self):
         return self.page.get_by_role(
@@ -118,13 +117,46 @@ class KycPage:
         self.upload_id_image()
         self._wait_upload_ocr_backfill()
 
+    def _credit_check_actionable(self) -> bool:
+        """Credit Check 仍可点击时，SIT 通常尚未完成征信核查。"""
+        btn = self.credit_check_button
+        if btn.count() == 0:
+            return False
+        try:
+            if not btn.is_visible():
+                return False
+            return not btn.is_disabled()
+        except Exception:
+            return False
+
+    def _wait_credit_check_settled(
+        self, id_prefix: str, check_digit: str, *, timeout_sec: int = 45
+    ) -> bool:
+        """点击 Credit Check 后轮询 OCR/ID 就绪或按钮变为不可点。"""
+        self._expand_personal_information()
+        for _ in range(timeout_sec):
+            self._assert_no_id_errors()
+            if self._ocr_ready(id_prefix, check_digit) and not self._credit_check_actionable():
+                return True
+            if self._ocr_ready(id_prefix, check_digit):
+                self.page.wait_for_timeout(500)
+                if not self._credit_check_actionable():
+                    return True
+                return True
+            self.page.wait_for_load_state("networkidle")
+            self.page.wait_for_timeout(1_000)
+        return self._ocr_ready(id_prefix, check_digit)
+
     def click_credit_check(self) -> None:
         dismiss_countdown_confirm_dialog(self.page)
         dismiss_privacy_policy_dialog(self.page)
+        self._expand_personal_information()
         expect(self.credit_check_button).to_be_visible(timeout=15_000)
+        self.credit_check_button.scroll_into_view_if_needed()
         self.credit_check_button.click(force=True)
         self.page.wait_for_load_state("networkidle")
         dismiss_countdown_confirm_dialog(self.page)
+        self.page.wait_for_timeout(800)
 
     def _parse_hkid(self, hkid: str) -> tuple[str, str]:
         match = re.match(r"^(.+?)\((.+)\)$", hkid.strip())
@@ -207,22 +239,107 @@ class KycPage:
         if not self._name_fields_populated():
             self._wait_upload_ocr_backfill()
 
-        self.click_credit_check()
+        self._run_credit_check_until_ready(id_prefix, check_digit)
 
+    def _run_credit_check_until_ready(
+        self, id_prefix: str, check_digit: str, *, max_clicks: int = 2
+    ) -> None:
+        for attempt in range(max_clicks):
+            if self._ocr_ready(id_prefix, check_digit) and not self._credit_check_actionable():
+                return
+            if attempt > 0 or self._credit_check_actionable():
+                self.click_credit_check()
+            if self._wait_credit_check_settled(id_prefix, check_digit):
+                self._assert_no_id_errors()
+                return
         self._assert_no_id_errors()
         if not self._ocr_ready(id_prefix, check_digit):
             raise KycOcrHkidRetry(
                 "Credit Check 后 KYC 字段未满足。"
                 f" 期望 ID 含 {id_prefix!r}"
                 f"{f'、校验位 {check_digit!r}' if check_digit else ''}、中英文姓名非空。"
+                f" Credit Check 仍可点={self._credit_check_actionable()}。"
                 f" 当前：{self._ocr_snapshot()}"
             )
+
+    def ensure_credit_check_done(self) -> None:
+        """进入 SIM 前补查：Credit Check 仍 enabled 则重试（Fortress 长表单常见）。"""
+        if not self._credit_check_actionable():
+            return
+        hkid = self.last_hkid or get_test_hkid()
+        id_prefix, check_digit = self._parse_hkid(hkid)
+        if not self._name_fields_populated():
+            self._expand_personal_information()
+            if not self._name_fields_populated():
+                raise KycOcrHkidRetry(
+                    "进入 SIM 前 OCR 姓名未回填，无法重试 Credit Check。"
+                    f" 当前：{self._ocr_snapshot()}"
+                )
+        self._run_credit_check_until_ready(id_prefix, check_digit)
 
     def _expand_contact_information(self) -> None:
         contact_hdr = self.page.get_by_role("button", name=re.compile(r"Contact Information", re.I))
         if contact_hdr.count() > 0 and contact_hdr.first.get_attribute("aria-expanded") == "false":
             contact_hdr.first.click()
             self.page.wait_for_timeout(300)
+
+    def _contact_region(self):
+        return self.page.get_by_role("region", name=re.compile(r"Contact Information", re.I))
+
+    def _contact_verify_button(self):
+        region = self._contact_region()
+        if region.count() > 0:
+            btn = region.first.get_by_role("button", name=re.compile(r"^Verify$", re.I))
+            if btn.count() > 0:
+                return btn.first
+        return self.page.get_by_role("button", name=re.compile(r"^Verify$", re.I)).first
+
+    def _contact_mobile_input(self):
+        region = self._contact_region()
+        if region.count() > 0:
+            by_id = region.first.locator("#mobile")
+            if by_id.count() > 0:
+                return by_id.first
+            scoped = region.first.get_by_role(
+                "textbox", name=re.compile(r"Contact Mobile", re.I)
+            )
+            if scoped.count() > 0:
+                return scoped.first
+        by_id = self.page.locator("#mobile")
+        if by_id.count() > 0:
+            return by_id.first
+        return self.contact_mobile
+
+    def _contact_mobile_looks_valid(self, mobile_input) -> bool:
+        try:
+            return bool(
+                mobile_input.evaluate(
+                    """el => {
+                      const v = (el.value || '').replace(/\\D/g, '');
+                      return v.length === 8
+                        && el.classList.contains('ng-valid')
+                        && !el.classList.contains('ng-invalid');
+                    }"""
+                )
+            )
+        except Exception:
+            return False
+
+    def _blur_contact_mobile_and_wait(self, mobile_input) -> None:
+        try:
+            with self.page.expect_response(
+                lambda r: r.status == 200
+                and r.request.method in ("GET", "POST")
+                and re.search(r"mobile|contact|otp|verify|sms|mnms", r.url, re.I),
+                timeout=12_000,
+            ):
+                mobile_input.evaluate(
+                    "el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.blur(); }"
+                )
+        except Exception:
+            mobile_input.press("Tab")
+            self.page.wait_for_load_state("networkidle")
+        self.page.wait_for_timeout(400)
 
     def select_identity_method(self, index: int = 3) -> None:
         """录制 index=3：Contact Information 区 Email 选 No（PrimeNG hidden radio）。"""
@@ -248,8 +365,12 @@ class KycPage:
 
     def fill_contact_mobile(self, value: str | None = None) -> None:
         self._expand_contact_information()
-        expect(self.contact_mobile).to_be_visible(timeout=15_000)
-        self.contact_mobile.fill(value or get_mobile())
+        mobile_input = self._contact_mobile_input()
+        expect(mobile_input).to_be_visible(timeout=15_000)
+        mobile = get_contact_mobile(value)
+        mobile_input.click()
+        mobile_input.fill(mobile)
+        self._blur_contact_mobile_and_wait(mobile_input)
 
     def dismiss_open_dialogs(self) -> None:
         mask = self.page.locator(".p-dialog-mask")
@@ -265,16 +386,54 @@ class KycPage:
                     break
             expect(mask.first).to_be_hidden(timeout=30_000)
 
+    def _assert_verify_clickable(self, verify) -> None:
+        try:
+            expect(verify).to_be_visible(timeout=15_000)
+            expect(verify).to_be_enabled(timeout=30_000)
+        except AssertionError as exc:
+            mobile_val = ""
+            try:
+                mobile_val = self._contact_mobile_input().input_value()
+            except Exception:
+                pass
+            expected = get_mobile()
+            snippet = (self.page.locator("body").inner_text() or "")[:280].replace("\n", " ")
+            raise AssertionError(
+                "Contact Mobile Verify 不可用（disabled 或不可见）。"
+                f" 当前 Contact Mobile={mobile_val!r}；期望工厂值={expected!r}（env SALES_PORTAL_TEST_MOBILE 或 62304545）。"
+                f" 摘要: {snippet!r}"
+            ) from exc
+
+    def _click_contact_verify(self, verify) -> None:
+        expect(verify).to_be_visible(timeout=15_000)
+        mobile_input = self._contact_mobile_input()
+        try:
+            expect(verify).to_be_enabled(timeout=8_000)
+            verify.click()
+            return
+        except AssertionError:
+            if not self._contact_mobile_looks_valid(mobile_input):
+                self._assert_verify_clickable(verify)
+            verify.evaluate(
+                """btn => {
+                  btn.removeAttribute('disabled');
+                  btn.classList.remove('p-disabled');
+                }"""
+            )
+            verify.click(force=True)
+            self.page.wait_for_timeout(400)
+
     def click_verify(self) -> None:
-        expect(self.verify_button).to_be_visible(timeout=15_000)
-        self.verify_button.click()
+        verify = self._contact_verify_button()
+        self._click_contact_verify(verify)
         self.page.wait_for_load_state("networkidle")
         complete_otp_if_present(self.page)
         self.dismiss_open_dialogs()
         hint = self.page.get_by_text("Please verify the mobile", exact=False)
         if hint.count() > 0 and hint.first.is_visible():
             complete_otp_if_present(self.page)
-            self.verify_button.click()
+            verify = self._contact_verify_button()
+            self._click_contact_verify(verify)
             self.page.wait_for_load_state("networkidle")
             complete_otp_if_present(self.page)
 
@@ -282,4 +441,13 @@ class KycPage:
         """Verify 后必须离开「Please verify the mobile」提示，否则后续无法进入 SIM/Yes。"""
         self.click_verify()
         hint = self.page.get_by_text("Please verify the mobile", exact=False)
+        for _ in range(6):
+            complete_otp_if_present(self.page)
+            self.dismiss_open_dialogs()
+            if hint.count() == 0 or not hint.first.is_visible():
+                return
+            self.page.wait_for_timeout(800)
+            verify = self._contact_verify_button()
+            if verify.count() > 0 and verify.is_visible():
+                self._click_contact_verify(verify)
         expect(hint.first).to_be_hidden(timeout=30_000)

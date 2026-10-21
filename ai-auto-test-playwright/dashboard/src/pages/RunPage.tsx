@@ -13,6 +13,30 @@ function runSelectionStorageKey(projectId: string): string {
   return `runPage:selectedNodeId:${projectId}`;
 }
 
+function runRecordVideoStorageKey(projectId: string): string {
+  return `runPage:recordVideo:${projectId}`;
+}
+
+function loadSavedRecordVideo(projectId: string | undefined): boolean {
+  if (!projectId) return false;
+  try {
+    return localStorage.getItem(runRecordVideoStorageKey(projectId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveRecordVideo(projectId: string | undefined, enabled: boolean): void {
+  if (!projectId) return;
+  try {
+    const key = runRecordVideoStorageKey(projectId);
+    if (enabled) localStorage.setItem(key, "1");
+    else localStorage.removeItem(key);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
 function loadSavedNodeId(projectId: string | undefined): string {
   if (!projectId) return "";
   try {
@@ -76,7 +100,7 @@ export function RunPage() {
   const [headed, setHeaded] = useState(true);
   const [slowmo, setSlowmo] = useState(600);
   const [vncPreview, setVncPreview] = useState(false);
-  const [recordVideo, setRecordVideo] = useState(false);
+  const [recordVideo, setRecordVideo] = useState(() => loadSavedRecordVideo(id));
   interface CollectItem {
     nodeId: string;
     name: string;
@@ -165,6 +189,7 @@ export function RunPage() {
   useEffect(() => {
     if (!id) return;
     setSelectedNodeId(loadSavedNodeId(id));
+    setRecordVideo(loadSavedRecordVideo(id));
     setCollectItems([]);
     void fetchJson<{ items: CollectItem[]; total: number }>(`/api/projects/${id}/tests/collect`)
       .then((data) => setCollectItems(data.items ?? []))
@@ -302,7 +327,11 @@ export function RunPage() {
           <input
             type="checkbox"
             checked={recordVideo}
-            onChange={(e) => setRecordVideo(e.target.checked)}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              setRecordVideo(checked);
+              saveRecordVideo(id, checked);
+            }}
           />
           录像（保存 webm）
         </label>

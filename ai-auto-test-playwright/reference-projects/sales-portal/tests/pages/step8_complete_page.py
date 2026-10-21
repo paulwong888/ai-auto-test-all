@@ -12,7 +12,7 @@ from pages.gateway_payment_page import (
     preflight_payment_gateway,
 )
 from pages.order_application_page import OrderApplicationPage
-from pages.overlay_helpers import dismiss_shop_cart_drawer
+from pages.overlay_helpers import dismiss_shop_cart_drawer, parse_footer_cart_amount
 from pages.payment_method_page import PaymentMethodPage
 from pages.payment_result_page import PaymentResultPage
 from helpers.cashier_sit_topup import apply_sit_cashier_topup
@@ -21,10 +21,20 @@ WAITING_PAYMENT_RE = re.compile(r"Waiting for payment done", re.I)
 WAITING_DIRECT_SALE_RE = re.compile(
     r"Please confirm direct sale payment|confirm direct sale payment", re.I
 )
+WAITING_FORTRESS_RE = re.compile(
+    r"Please confirm fortress payment|confirm fortress payment", re.I
+)
 PRIMARY_SIM_RE = re.compile(r"Primary Sim Mobile Number", re.I)
 CHECK_STATUS_RE = re.compile(r"Check Payment Status", re.I)
 DIRECT_SALE_PAYMENT_BTN_RE = re.compile(r"Direct Sale Payment", re.I)
+FORTRESS_PAYMENT_BTN_RE = re.compile(r"Fortress Payment", re.I)
 CONFIRM_PAYMENT_RE = re.compile(r"Confirm Payment", re.I)
+ENTER_PAYMENT_AMOUNT_RE = re.compile(r"Enter payment amount", re.I)
+AMOUNT_TO_PAY_RE = re.compile(r"Amount to pay", re.I)
+CONTINUE_RE = re.compile(r"^Continue$", re.I)
+BILL_AMOUNT_IN_DIALOG_RE = re.compile(
+    r"Bill amount is\s*\$?\s*([\d,]+(?:\.\d{2})?)", re.I
+)
 # environment.ogp-sit.ts
 ONLINE_PAYMENT_BASE = "https://wwwuat.three.com.hk/DT/postpaid/dev3/tc/checkout/transaction"
 PAYMENT_POPUP_TIMEOUT_MS = 25_000
@@ -94,8 +104,47 @@ class Step8CompletePage:
             ),
         )
 
+    def _resolve_bill_amount(self, dialog_text: str) -> str:
+        match = BILL_AMOUNT_IN_DIALOG_RE.search(dialog_text)
+        if match:
+            raw = match.group(1).replace(",", "")
+            if "." in raw:
+                return raw
+            return f"{raw}.00"
+        bill_alt = re.search(
+            r"Bill amount(?: is|:)\s*\$?\s*([\d,]+(?:\.\d{2})?)", dialog_text, re.I
+        )
+        if bill_alt:
+            raw = bill_alt.group(1).replace(",", "")
+            return raw if "." in raw else f"{raw}.00"
+        footer = parse_footer_cart_amount(self.page)
+        if footer is not None and footer > 0:
+            return f"{footer:.2f}" if footer % 1 else f"{int(footer)}.00"
+        return "100.00"
+
+    def _submit_payment_amount_dialog(
+        self, dialog_name: re.Pattern[str] = ENTER_PAYMENT_AMOUNT_RE
+    ) -> None:
+        """Enter payment amount：填 Amount to pay → Continue（Direct Sale / Fortress 共用）。"""
+        dialog = self.page.get_by_role("dialog", name=dialog_name)
+        if dialog.count() == 0:
+            return
+        box = dialog.first
+        expect(box).to_be_visible(timeout=30_000)
+        amount_str = self._resolve_bill_amount(box.inner_text())
+        field = box.get_by_role("textbox", name=AMOUNT_TO_PAY_RE)
+        if field.count() == 0:
+            field = box.get_by_label(AMOUNT_TO_PAY_RE)
+        expect(field.first).to_be_visible(timeout=15_000)
+        field.first.fill("")
+        field.first.fill(amount_str)
+        continue_btn = box.get_by_role("button", name=CONTINUE_RE)
+        expect(continue_btn.first).to_be_visible(timeout=15_000)
+        continue_btn.first.click(force=True)
+        self.page.wait_for_timeout(400)
+
     def confirm_direct_sale_payment(self) -> None:
-        """Step8：点 Direct Sale Payment → Confirm Payment（createDirectSalesPayment）。"""
+        """Step8：Direct Sale Payment → Enter amount → Continue → Confirm Payment。"""
         dismiss_shop_cart_drawer(self.page)
         body = self.page.locator(".flex-body")
         expect(body.get_by_text(PRIMARY_SIM_RE).first).to_be_visible(timeout=60_000)
@@ -105,6 +154,24 @@ class Step8CompletePage:
         create_btn = self.page.get_by_role("button", name=DIRECT_SALE_PAYMENT_BTN_RE)
         expect(create_btn.first).to_be_visible(timeout=60_000)
         create_btn.first.click(force=True)
+        self._submit_payment_amount_dialog()
+        confirm = self.page.get_by_role("button", name=CONFIRM_PAYMENT_RE)
+        expect(confirm.first).to_be_visible(timeout=30_000)
+        confirm.first.click(force=True)
+        PaymentResultPage(self.page)._wait_loading_gone(timeout_ms=120_000)
+
+    def confirm_fortress_payment(self) -> None:
+        """Step8：Fortress Payment →（可选 Enter amount）→ Confirm Payment。"""
+        dismiss_shop_cart_drawer(self.page)
+        body = self.page.locator(".flex-body")
+        expect(body.get_by_text(PRIMARY_SIM_RE).first).to_be_visible(timeout=60_000)
+        waiting = body.get_by_text(WAITING_FORTRESS_RE)
+        if waiting.count() > 0:
+            expect(waiting.first).to_be_visible(timeout=30_000)
+        create_btn = self.page.get_by_role("button", name=FORTRESS_PAYMENT_BTN_RE)
+        expect(create_btn.first).to_be_visible(timeout=60_000)
+        create_btn.first.click(force=True)
+        self._submit_payment_amount_dialog()
         confirm = self.page.get_by_role("button", name=CONFIRM_PAYMENT_RE)
         expect(confirm.first).to_be_visible(timeout=30_000)
         confirm.first.click(force=True)
@@ -126,6 +193,25 @@ class Step8CompletePage:
             failure_hint=(
                 f"Direct Sale 支付在 Step8 轮询 {max_attempts} 次仍未完成；"
                 "请确认 SIT directSalesPayment 已创建或清 pending draft 后重试。"
+            ),
+        )
+
+    def complete_fortress_via_status_check(
+        self,
+        max_attempts: int = 12,
+        interval_ms: int = 5_000,
+    ) -> None:
+        """Fortress：确认支付后轮询 Check Payment Status（无 topupMultipleWallet）。"""
+        self.confirm_fortress_payment()
+        result = PaymentResultPage(self.page)
+        if result.is_order_placed_success():
+            return
+        self._poll_until_order_placed(
+            max_attempts=max_attempts,
+            interval_ms=interval_ms,
+            failure_hint=(
+                f"Fortress 支付在 Step8 轮询 {max_attempts} 次仍未完成；"
+                "请确认 SALES_PORTAL_FORTRESS_SHOP_ID 与 SIT fortressPayment 已创建。"
             ),
         )
 
