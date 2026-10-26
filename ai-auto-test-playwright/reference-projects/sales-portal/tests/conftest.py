@@ -156,6 +156,15 @@ def _ensure_portal_session(
     _sso_login(context, page, save_auth=save_auth)
 
 
+def _ensure_english_ui(page: Page) -> None:
+    """侧栏菜单文案依赖英文（如 5G HBB / SIM Plan）；若当前为中文则切到 English。"""
+    english = page.get_by_role("radio", name="English")
+    if english.count() == 0 or english.first.is_checked():
+        return
+    english.first.check()
+    page.wait_for_load_state("networkidle")
+
+
 def _open_logged_in_page(context: BrowserContext) -> Page:
     """新建页、登录并清理 pending 购物车/草稿（默认 POS 见 SALES_PORTAL_POS_ACCOUNT）。"""
     page = context.new_page()
@@ -164,6 +173,7 @@ def _open_logged_in_page(context: BrowserContext) -> Page:
     from pages.user_selection_page import UserSelectionPage
 
     UserSelectionPage(page).ensure_pos_account()
+    _ensure_english_ui(page)
     from pages.overlay_helpers import (
         cart_amount_looks_stale,
         clear_pending_payment_order,

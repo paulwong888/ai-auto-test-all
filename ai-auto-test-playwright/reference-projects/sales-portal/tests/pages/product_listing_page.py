@@ -232,28 +232,15 @@ class ProductListingPage:
                     self._wait_sim_only_price_loaded()
                     return
 
-        section = self.page.locator(".flex-body").filter(
-            has=self.page.get_by_text(re.compile(r"Choo?se\s*1", re.I))
-        )
-        scope = section.first if section.count() > 0 else self.page.locator(".flex-body").first
-        for text_re in (pattern, short):
-            option = scope.get_by_text(text_re)
-            for i in range(option.count()):
-                hit = option.nth(i)
-                try:
-                    if not hit.is_visible():
-                        continue
-                    hit.scroll_into_view_if_needed()
-                    hit.click(force=True)
-                    self._wait_sim_only_price_loaded()
-                    return
-                except Exception:
-                    continue
-            rb = scope.locator("p-radiobutton, .p-radiobutton").filter(has_text=text_re)
-            if rb.count() > 0:
-                rb.first.click(force=True)
+        recorded = re.compile(r"-?month Handset Switch Lite Service", re.I)
+        for text_re in (pattern, short, recorded):
+            hit = self.page.get_by_text(text_re).first
+            try:
+                hit.click(timeout=10_000)
                 self._wait_sim_only_price_loaded()
                 return
+            except Exception:
+                continue
 
         raise AssertionError(
             f"Sim Only「Choose 1」可见但未选中 VAS：{vas_label!r}。"
@@ -268,12 +255,29 @@ class ProductListingPage:
         """选套餐 + Choose 1 后立即点底部购物车旁 ``>`` 到 SELECT_PHONE。"""
         OrderApplicationPage(self.page).next_step()
 
-    def _done_sim_only_offer(self, *, advance: bool) -> None:
-        self._finalize_sim_only_offer_selection()
+    def _select_fortress_admin_fee(self) -> None:
+        admin_fee = self.page.get_by_text("Admin Fee", exact=False).first
+        expect(admin_fee).to_be_visible(timeout=15_000)
+        admin_fee.click()
+        self._wait_sim_only_price_loaded()
+
+    def _done_sim_only_offer(self, *, advance: bool, fortress: bool = False) -> None:
+        if fortress:
+            self._wait_sim_only_price_loaded()
+            self._select_fortress_admin_fee()
+        else:
+            self._finalize_sim_only_offer_selection()
         if advance:
             self._advance_sim_only_select_plan_step()
 
-    def select_sim_only_offer(self, *, advance: bool = True) -> None:
+    def _click_sim_only_offer_card(self, target) -> None:
+        expect(target).to_be_visible(timeout=15_000)
+        target.scroll_into_view_if_needed()
+        if "selected" not in (target.get_attribute("class") or ""):
+            target.click(force=True)
+        expect(target).to_have_class(re.compile(r"\bselected\b"), timeout=10_000)
+
+    def select_sim_only_offer(self, *, advance: bool = True, fortress: bool = False) -> None:
         """Sim Only：选套餐卡 → Choose 1 VAS → 默认马上 next_step。"""
         self._dismiss_sidebar_mask()
         self._expand_sim_only_promotion_list()
@@ -284,30 +288,18 @@ class ProductListingPage:
                 self.page.locator(".box").filter(has_text=key),
             ):
                 if loc.count() > 0:
-                    target = loc.first
-                    expect(target).to_be_visible(timeout=15_000)
-                    target.scroll_into_view_if_needed()
-                    if "selected" not in (target.get_attribute("class") or ""):
-                        target.click(force=True)
-                    self._done_sim_only_offer(advance=advance)
+                    self._click_sim_only_offer_card(loc.first)
+                    self._done_sim_only_offer(advance=advance, fortress=fortress)
                     return
         active = self.page.locator(".p-carousel-item-active .box")
         if active.count() > 0:
-            target = active.first
-            expect(target).to_be_visible(timeout=15_000)
-            target.scroll_into_view_if_needed()
-            if "selected" not in (target.get_attribute("class") or ""):
-                target.click(force=True)
-            self._done_sim_only_offer(advance=advance)
+            self._click_sim_only_offer_card(active.first)
+            self._done_sim_only_offer(advance=advance, fortress=fortress)
             return
         cards = self._sim_only_offer_cards()
         if cards.count() > 0:
-            target = cards.first
-            expect(target).to_be_visible(timeout=15_000)
-            target.scroll_into_view_if_needed()
-            if "selected" not in (target.get_attribute("class") or ""):
-                target.click(force=True)
-            self._done_sim_only_offer(advance=advance)
+            self._click_sim_only_offer_card(cards.first)
+            self._done_sim_only_offer(advance=advance, fortress=fortress)
             return
         for pattern in (
             re.compile(r"\$\s*\d+\s*/\s*Month", re.I),
@@ -319,7 +311,7 @@ class ProductListingPage:
                     hit = loc.first
                     hit.scroll_into_view_if_needed()
                     hit.click(force=True)
-                    self._done_sim_only_offer(advance=advance)
+                    self._done_sim_only_offer(advance=advance, fortress=fortress)
                     return
                 except Exception:
                     pass

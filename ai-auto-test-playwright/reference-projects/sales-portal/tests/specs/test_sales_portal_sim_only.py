@@ -83,7 +83,7 @@ class TestSalesPortalSimOnly:
                 break
             force_browse_home_sim_only(page, BASE_URL)
 
-    def _reach_offer(self, listing: ProductListingPage) -> None:
+    def _reach_offer(self, listing: ProductListingPage, *, fortress: bool = False) -> None:
         """Sim Only：browse → 选套餐 → chevron → 选号（若有）→ KYC 可见。"""
         page = listing.page
         self._start_fresh_browse(page)
@@ -91,7 +91,7 @@ class TestSalesPortalSimOnly:
         for attempt in range(2):
             _click_new_subscription(page)
             listing.navigate_sim_only_recorded()
-            listing.select_sim_only_offer()
+            listing.select_sim_only_offer(fortress=fortress)
             if phone.on_phone_step():
                 phone.select_new_number_from_pool()
             if _sim_visible(page):
@@ -282,7 +282,7 @@ class TestSalesPortalSimOnly:
     @pytest.mark.smoke
     def test_tc100_sim_only_fortress_payment(self, logged_in_page_fortress: Page) -> None:
         page = logged_in_page_fortress
-        self._reach_offer(ProductListingPage(page))
+        self._reach_offer(ProductListingPage(page), fortress=True)
         FortressShopPage(page).prepare_after_select_offer()
         order, kyc, sim = self._wizard_through_sim_with_hkid_retry(page)
 
